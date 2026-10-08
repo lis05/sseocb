@@ -1,0 +1,130 @@
+# SSEOCBV2- Software Side Executor Of Compressed Binaries V2
+SSEOCB is a project aimed at execution of compressed programs, solving a fundamental
+problem where the machine simply doesn't have enough memory to run a program.
+
+For example, if one wans to run a small TLS 1.3 Handshake client (like mbedTLS) on
+CH32V203F6P6, they will not be able to do it, as the chip has 32KiB of Flash while
+the client is about 46KiB. Even if compressed using standard tools like lz4, there
+won't be enough space to decompress the entire program.
+
+The solution is SSEOCB - which can compress a program, attach a small interpreter to
+it, and flash the image to the machine. Later, the compressed program is executed
+instrution by instruction. This allows for big compressible programs (like 46KiB ->
+28KiB) to be executed on machines which initially may seem too limited for it.
+
+## Environment
+Machine with RV32I architecture.
+
+## General idea
+The program is compiled, and before it is linked some modifications to it are done.
+After the entire image is linked, it is compressed, the interpreter binary
+(uncompressed) is attached, and both are flashed onto the device.
+
+The interpreter maintains some variables like instruction pointer, and executes the
+program instruction by instruction by fetching (reading) the next instruction from
+the compressed payload. The main stack is not modified by the interpreter.
+
+## Decompression
+Decompressor supports decompression of arbitrary segments of original payload using
+O(1) memory. The decompressor itself has to be very small, so options like blaris,
+graemi, and custom BPE/specialized decomperssors should be used.
+
+## Notation
+* pM - physical memory of the device. Reading / writing pM is supported, but special
+  care has to be taken when reading are that overlaps with the compressed payload.
+* pP - physical payload that contains the compressed program.
+* vP - virtual view of the original program. For simplicity, assume that virtual view
+  begins at zero, and all addresses inside of the view are relative to 0. Reading vP
+  results in the interpreter returning the bytes that would be at the given address in
+  the virtual view if the program was uncompressed.
+* pPC - physical program counter.
+* vPC - virtual program counter. It is used in vP to fetch the next instruction.
+  Physical PC will not be the same as vPC.
+* pST - physical stack that is created for a thread. Contains frames created by
+  software, including addresses of trampolines.
+* D(X, len) - fetch (decode) vP[X..X+len].
+
+## Registers
+First of all, the programs that can be executed by SSEOCB have to be compiled for
+RV32E. This way, registers x0-x15 are used by vP, while x16-x31 are available to be
+used by the interpreter. This simplifies things, as the registers file does not need
+to be simulated, and there is no fear that interpreter / vP will override each
+other's state.
+
+x16, x17, x18 and x19 are reserved for reading / writing arguments. The following small
+subroutines are present in the interpreter:
+read_arg1:
+    mv x16, x0; ret
+    mv x16, x1; ret
+    ...
+    mv x16, x15; ret
+
+read_arg2:
+    mv x17, x0; ret
+    mv x17, x1; ret
+    ...
+    mv x17, x15; ret
+
+write_arg1:
+    mv x0, x18; ret
+    mv x1, x18; ret
+    ...
+    mv x15, x18; ret
+
+Where ret is an alias for jalr x0, x19 where x19 is the return address.
+
+When needed, the interpreter calls them at a certain offset that is calculated based
+on the argument (x0-x15). The convention is that the offset for read_arg1/read_arg2
+is stored in x16/x17 directly, while for write_arg1 the offset is stored in x16.
+
+## Instructions overview
+### Trivial instructions
+These incluide add, sub, sll, slt, sltu, xor, srl, sra, or, and, addi, slti, sltiu,
+xori, ori, andi, slli, srli, srai, lui.
+
+To execute such an instruction, the intepreter simply jumps to a small stub that does
+exactly it. For example, to execute `add a, b, c`, the following stub would be
+implemented:
+
+add_stub:
+    <call read_arg1 with x16=index of b>
+    <call read_arg2 with x17=index of c>
+    add x18, x16, x17
+    <call write_arg1 with x16=index of a>
+
+### Memory loads
+Instructions lb, lbu, lh, lhu, lw include checks to identify if the
+requested address belongs to vP or not. If yes, D(<address>, <len>) is returned.
+Otherwise, pM[<address>] is returned via a simple native read.
+
+### Memory stores
+Instructions sb, sh, sw include checks to identify if the requested address belongs
+to vP or not. It is illegal to modify vP / pP.
+
+### Jumps and calls
+Instructions jal, jalr, beq, bne, blt, bge, bltu, bgeu must be taken care of, as
+depending on where the callee is the approach is different. If a jump/call within vP
+is done, vPC is updated. Otherwise, do the native call via a trampoline.
+
+### Special instructions
+* auipc - for this instruction PC is supstituted with vPC.
+* fence - executed natively via a stub.
+* ebreak - noop, as debugging pP is pointless.
+* ecall - done by having a specialized trampoline which saves all registers
+  (including interpreter's ones), executes a native ecall, and then returns to the
+  interpreter.
+
+## Symbols
+When a normal binary is linked, all symbols are assigned addresses in pM. However,
+this will not work with SSEOCB, as when an external caller requires vP to provide a
+callback, providing an address in pM will be incorrect, as it does not correspond to
+the symbol in vP. Therefore, all symbols must be assigned different addresses to
+trampolines generated before linkage. This way, all external callers will see the
+address of <symbol N> as address of <trampoline X>.
+
+When an address of <symbol N> is taken, it is evaluated as address of <trampoline X>.
+This way vP can compare two symbols in vP, and the result will be correct as
+trampolines will uniquely identify virtual symbols.
+
+Trampolines are simply forwarding the call to the interpreter by setting vPC to the
+hardcoded adress of the corresponding virtual symbol.

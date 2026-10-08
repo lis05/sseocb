@@ -1,0 +1,11 @@
+[package]
+name = "guest-tool"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+object = "0.40.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"

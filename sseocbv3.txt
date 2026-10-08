@@ -1,0 +1,216 @@
+# SSEOCBV3 - Software Side Executor Of Compressed Binaries V3
+
+## 1. Overview & Motivation
+SSEOCB is an execution system designed to run oversized programs on severely
+memory-constrained microcontrollers, solving the fundamental limitation where
+on-chip Flash is too small to hold the uncompressed binary and SRAM is too small
+to decompress it into memory at runtime.
+
+For example, running an mbedTLS 1.3 client (~46 KiB) on a chip like the
+CH32V203F6P6 (32 KiB Flash, 10 KiB SRAM) is normally impossible. While
+sliding-window decompressors exist, achieving acceptable compression ratios
+requires a large window that microcontroller RAM cannot accommodate.
+
+SSEOCB solves this by:
+1. Compressing the code and read-only data sections offline.
+2. Bundling a tiny in-place interpreter runtime with the compressed payload.
+3. Fetching, decompressing, and interpreting instructions on-the-fly.
+4. Exploiting an asymmetric ISA design: the software toolchain targets RV32E,
+   while the physical silicon implements RV32I. The guest code strictly uses
+   the lower 16 registers (x0-x15), while the interpreter uses the higher 16
+   registers (x16-x31), yielding a completely isolated, zero-overhead hardware
+   register set.
+
+
+## 2. Hardware Environment & Software Toolchain
+
+### Hardware Silicon
+* Processor core implementing base RV32I.
+* Memory consists of physical Flash (non-volatile) and physical SRAM.
+
+### Software Toolchain
+* All guest code is compiled targeting RV32E:
+  `-march=rv32e`
+* The guest code compiler is strictly restricted to registers x0-x15.
+* The compiler NEVER emits instructions referencing x16-x31.
+* Registers x16-x31 physically exist in hardware but are 100% invisible to
+  all compiled guest code. They belong exclusively to the interpreter shadow
+  context.
+
+
+## 3. Notation
+* pM: Physical memory of the device (Flash and SRAM).
+* pP: Physical payload containing the compressed program image stored in Flash.
+* vM: Virtual uncompressed memory view. Code and read-only data start at 0.
+* vP: Virtual view of the compressed program payload. Fetching from vP returns
+  the bytes that would be present if the binary were uncompressed in memory.
+* pPC: Physical program counter (hardware PC executing interpreter or native code).
+* vPC: Virtual program counter maintained by the interpreter.
+* pST: Physical stack in SRAM pointed to by sp. Used for native stack frames,
+  trampoline return frames, and local variables.
+* D(addr, len): Decompressor primitive that decodes len bytes from vP starting
+  at virtual address addr.
+
+
+## 4. Registers
+
+Because x0-x15 are shared directly with the running guest program, the
+interpreter never needs to emulate or spill/reload guest registers in RAM.
+Guest register operations execute directly on physical registers.
+
+* x0-x15: Reserved for guest code
+* x16: i_arg1 (first argument for instruction execution)
+* x17: i_arg2 (second argument for instruction execution)
+* x18: i_res (result of instruction execution)
+* x19: i_ret (return address from subroutine)
+* x20-x31: Available for interpreter implementation (allocated by Rust)
+
+
+## 5. Register Access Subroutines
+
+When interpreting instructions, operands rs1, rs2, and rd (0-15) are dynamically
+extracted from the instruction word. To access the corresponding physical
+registers without branch ladders, the interpreter uses three fixed-pitch jump
+tables.
+
+Each entry is exactly 8 bytes (2 RV32I instructions: mv and ret):
+
+```assembly
+read_arg1:
+    mv i_arg1, x0;  jalr x0, i_ret, 0    # Entry 0:  read x0
+    mv i_arg1, x1;  jalr x0, i_ret, 0    # Entry 1:  read x1
+    mv i_arg1, x2;  jalr x0, i_ret, 0    # Entry 2:  read x2
+    ...
+    mv i_arg1, x15; jalr x0, i_ret, 0    # Entry 15: read x15
+
+read_arg2:
+    mv i_arg2, x0;  jalr x0, i_ret, 0    # Entry 0:  read x0
+    mv i_arg2, x1;  jalr x0, i_ret, 0    # Entry 1:  read x1
+    ...
+    mv i_arg2, x15; jalr x0, i_ret, 0    # Entry 15: read x15
+
+write_arg1:
+    mv x0,  i_res; jalr x0, i_ret, 0    # Entry 0:  write x0 (hardware nop, safe)
+    mv x1,  i_res; jalr x0, i_ret, 0    # Entry 1:  write x1
+    ...
+    mv x15, i_res; jalr x0, i_ret, 0    # Entry 15: write x15
+```
+
+Invocation Protocol:
+1. Multiply register index by 8: offset = reg_index << 3.
+2. Compute target entry: entry_addr = table_base + offset.
+3. Call via `jalr i_ret, entry_addr, 0`. This saves the return address (pPC + 4)
+   into `i_ret` (x19).
+4. The entry executes the transfer and returns immediately to the address in
+   `i_ret`.
+
+
+## 6. Decompression
+A decompression algorithm can be plugged in if it implements the correct API
+(such as D(addr, len) to decode bytes from vP). Any caching or buffering is an
+internal detail of the decompression algorithm if it decides to implement it.
+
+
+## 7. Instructions Overview
+
+### 7.1 Trivial Instructions
+These include: add, sub, sll, slt, sltu, xor, srl, sra, or, and, addi, slti,
+sltiu, xori, ori, andi, slli, srli, srai, lui.
+
+To execute such an instruction, the interpreter simply jumps to a small stub
+that performs the operation. For example, to execute `add a, b, c`:
+
+```
+add_stub:
+    <call read_arg1 with i_arg1 = index of b>
+    <call read_arg2 with i_arg2 = index of c>
+    add i_res, i_arg1, i_arg2
+    <call write_arg1 with i_arg1 = index of a>
+```
+
+### 7.2 Memory Loads
+Instructions lb, lbu, lh, lhu, lw include checks to identify if the requested
+address belongs to vP or not. If yes, `D(address, len)` is returned.
+Otherwise, `pM[address]` is returned via a simple native read.
+
+### 7.3 Memory Stores
+Instructions sb, sh, sw include checks to identify if the requested address
+belongs to vP or not. It is illegal to modify vP / pP. If the address belongs to
+pM (e.g. SRAM), the store is performed natively.
+
+### 7.4 Jumps and Calls
+Instructions jal, jalr, beq, bne, blt, bge, bltu, bgeu must be taken care of,
+as depending on where the target is, the approach is different:
+* If both caller and callee are inside vP: simply update vPC (and write the
+  return address if the instruction links).
+* Otherwise, the target is in native code: execute the call/jump via the native
+  call trampoline.
+
+### 7.5 Special Instructions
+* auipc: For this instruction, PC is substituted with vPC.
+* fence: Executed natively via a stub.
+* ebreak: No-op, as debugging pP is pointless.
+* ecall: Handled by having a specialized trampoline which saves interpreter
+  state, executes native ecall, and returns to the interpreter.
+
+
+## 8. Trampolines
+
+### 8.1 Outbound Calls (vP -> pM)
+When a jump or call targets an address outside vP (native code in pM):
+1. The interpreter jumps to `native_call_trampoline`.
+2. The trampoline saves the interpreter state.
+3. The trampoline performs the native call.
+4. Upon return from the native function, the trampoline restores the interpreter
+   state and returns back to the interpreter loop.
+
+### 8.2 Inbound Calls & Callbacks (pM -> vP)
+When a normal binary is linked, all symbols are assigned addresses in pM.
+However, this will not work with SSEOCB, as when an external caller requires
+vP to provide a callback, providing an address in pM will be incorrect, as it
+does not correspond to the symbol in vP.
+
+Therefore, all address-taken symbols in vP are assigned addresses to PLT stubs
+generated before linkage. External callers see the address of `<symbol N>` as the
+address of `<trampoline X>`.
+
+When an address of `<symbol N>` is taken, it evaluates to the address of
+`<trampoline X>`. This way, vP can also compare two symbols, and the result is
+correct as trampolines uniquely identify virtual symbols.
+
+PLT stubs simply forward the call to the interpreter by setting vPC to the
+hardcoded address of the corresponding virtual symbol.
+
+
+## 9. Toolchain & Linkage Pipeline
+
+1. Compilation Phase:
+   Source code is compiled with:
+   `gcc -march=rv32e -ffunction-sections -fdata-sections`
+   This produces ELF object files referencing only registers x0-x15.
+
+2. Pre-Link Pass & PLT Generation:
+   A tool scans the relocations and symbol table to detect symbols whose
+   addresses are taken (such as function pointers and callbacks). For each
+   address-taken symbol, a PLT stub is generated. The symbol's address is
+   reassigned to point to its corresponding PLT stub.
+
+3. Linking Phase:
+   The project is linked using two address domains:
+   * Virtual Domain (vM): Links virtual .text and .rodata starting at 0.
+   * Physical Domain (pM): Links CRT startup, interpreter runtime, PLT stubs,
+     and native code into physical Flash. SRAM is mapped identically.
+
+4. Compression & Image Packaging:
+   * Virtual .text and .rodata are compressed into payload pP using the selected
+     decompressor.
+   * The final flashable binary combines the vector table, CRT, interpreter,
+     PLT stubs, native code, and the compressed payload pP.
+
+
+## 10. Invariants & Errors
+
+* Flash Write Protection:
+  Any attempt to write into vP / pP is illegal and halts execution.
+* Invalid Opcode:
+  If an unknown instruction is encountered, the interpreter halts.

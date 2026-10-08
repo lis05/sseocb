@@ -1,0 +1,84 @@
+# SSEOCBV1 - Software Side Executor Of Compressed Binaries V1
+
+## Environment
+Machine with 64KiB of memory and 2-byte word. Lower 32KiB is SRAM, upper 32KiB is
+IMEM.
+Registers: 32 GPRs, each one word. No floating points. PC is available to read but
+not write. Interrupts are supported.
+
+Instruction set is simple, for now assume that basic operations like JMP, ADD, MOV,
+CMP are present with expected semantics.
+
+## Decompression
+Decompressor supports decompression of arbitrary segments of original payload using
+O(1) memory.
+
+## Assumptions of V1
+This version of SSEOCB assumes that the only binary present on the target system is
+the one containing our program + interpreter. This means: no external libraries.
+The purpose of V1 is to explore whether SSEOCB can handle common program
+operations.
+
+
+## SSEOCBV1
+The interpreter will function by having special code interpret each instruction.
+First of all, memory view is divided into two: vM[X] - denotes byte at position X in
+the "virtual", simulated view of the memory. In this view the program is not
+compressed, and is treated as a normal memory. Secondly, pM[X] denotes byte at
+position X in the physical, real memory view where program is compressed.
+
+SSEOCBV1 consists of an interpreter program in pM and a compressed binary in pM which
+contains a compressed version of a program in vM. The interpreter is located at
+address 0x8000 (the beginning of IMEM), the compressed program may be located somewhere
+else in the IMEM. Let's call the compressed programm pP, and its virtual counterpart
+vP.
+
+The interpreter will use its small subset of registers, leaving the rest to the
+target program which must be compiled without the reserved registers. This way
+virtual registers and physical registers are the same.
+
+The interpreter will maintain a vPC.
+
+### WHAT IS TRIVIALLY SUPPORTED
+* Reading vM[X]
+Trivial, as the decompressor supports reading the compressed binary at arbitrary
+positions.
+
+* Reading / writing pM[X]
+Trivial.
+
+* Execution of simple instructions operating on registers only (like ADD, MOV).
+These are trivial, as they have no side effects.
+
+* JMP X where X is inside of vP. The interpreter simply sets vPC to X.
+
+* CALL X where X is inside of vP. Calls are substituted by JMP and PUSH/POP. All of
+them are trivially supported.
+
+* RET. Ret pops an address from the stack, and then does JMP to that address. As
+long as it's contained within vP, its trivial.
+
+### Interrupts
+Interrupts table is stored at 0x0000 and contains addresses to a single common
+trampoline defined within the interpreter. The actual interrupt handler is in vP.
+When called, the trampoline queries the interrupt controller, saves virtual context,
+and sets vPC to the target handler in vP.
+
+### External Callbacks & Trampolines
+To handle external callbacks seamlessly without runtime signature inspection, all
+address-taken functions resolve to a Procedure Linkage Table (PLT) consisting of tiny
+stubs (e.g. 2 instructions / 4 bytes each).
+
+Only functions that have their address actually taken (such as in `MOV REG, &func`)
+get a stub generated; direct internal calls do not. At link time, the address-of
+operation is overridden so that the function symbol points directly to its stub in
+executable memory. Each stub simply loads the target function's vPC into a reserved
+interpreter register and jumps to a shared callback dispatcher:
+
+plt_stub_X:
+    MOVI R31, <target_vPC>
+    JMP  common_sw_dispatcher
+
+Additionally, the interpreter will contain a separate stack for virtual addresses, as
+the main real stack will contain pM addresses while we also want to keep track of vP
+addresses.

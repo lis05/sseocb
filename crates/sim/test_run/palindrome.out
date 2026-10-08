@@ -1,0 +1,11 @@
+Palindrome test:
+"racecar" -> YES
+"hello" -> NO
+"madam" -> YES
+"riscv" -> NO
+"step on no pets" -> YES
+"noon" -> YES
+"code" -> NO
+"a" -> YES
+"" -> YES
+Palindrome done.
