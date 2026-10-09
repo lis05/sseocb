@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cargo run -p sim run "$@"
+cargo run -p sim "$@"
