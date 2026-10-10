@@ -6,4 +6,5 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+object = "0.40.0"
 rv32-isa = { path = "../rv32-isa" }

@@ -152,6 +152,7 @@ dependencies = [
 name = "sim"
 version = "0.1.0"
 dependencies = [
+ "object",
  "rv32-isa",
 ]
 
