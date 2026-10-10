@@ -1,9 +1,12 @@
 [package]
-name = "sim"
+name = "int"
+edition = "2024"
 version.workspace = true
-edition.workspace = true
 authors.workspace = true
 license.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 rv32-isa = { path = "../rv32-isa" }

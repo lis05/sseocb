@@ -1,3 +1,3 @@
 pub mod cpu;
-pub mod instruction;
+pub use rv32_isa as instruction;
 pub mod memory;

@@ -1,3 +1,4 @@
+#![no_std]
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Instruction {
@@ -196,6 +197,151 @@ pub fn parse(raw: u32) -> Option<Instruction> {
 
         _ => None,
     }
+}
+
+impl Instruction {
+    pub fn encode(&self) -> u32 {
+        match *self {
+            // Upper Immediate (U-type)
+            Instruction::lui { rd, imm } => encode_u(0b0110111, rd, imm),
+            Instruction::auipc { rd, imm } => encode_u(0b0010111, rd, imm),
+
+            // Unconditional Jumps
+            Instruction::jal { rd, imm } => encode_j(0b1101111, rd, imm),
+            Instruction::jalr { rd, rs1, imm } => encode_i(0b1100111, rd, 0b000, rs1, imm),
+
+            // Conditional Branches (B-type)
+            Instruction::beq { rs1, rs2, imm } => encode_b(0b1100011, 0b000, rs1, rs2, imm),
+            Instruction::bne { rs1, rs2, imm } => encode_b(0b1100011, 0b001, rs1, rs2, imm),
+            Instruction::blt { rs1, rs2, imm } => encode_b(0b1100011, 0b100, rs1, rs2, imm),
+            Instruction::bge { rs1, rs2, imm } => encode_b(0b1100011, 0b101, rs1, rs2, imm),
+            Instruction::bltu { rs1, rs2, imm } => encode_b(0b1100011, 0b110, rs1, rs2, imm),
+            Instruction::bgeu { rs1, rs2, imm } => encode_b(0b1100011, 0b111, rs1, rs2, imm),
+
+            // Loads (I-type)
+            Instruction::lb { rd, rs1, imm } => encode_i(0b0000011, rd, 0b000, rs1, imm),
+            Instruction::lh { rd, rs1, imm } => encode_i(0b0000011, rd, 0b001, rs1, imm),
+            Instruction::lw { rd, rs1, imm } => encode_i(0b0000011, rd, 0b010, rs1, imm),
+            Instruction::lbu { rd, rs1, imm } => encode_i(0b0000011, rd, 0b100, rs1, imm),
+            Instruction::lhu { rd, rs1, imm } => encode_i(0b0000011, rd, 0b101, rs1, imm),
+
+            // Stores (S-type)
+            Instruction::sb { rs1, rs2, imm } => encode_s(0b0100011, 0b000, rs1, rs2, imm),
+            Instruction::sh { rs1, rs2, imm } => encode_s(0b0100011, 0b001, rs1, rs2, imm),
+            Instruction::sw { rs1, rs2, imm } => encode_s(0b0100011, 0b010, rs1, rs2, imm),
+
+            // Immediate Arithmetic (I-type)
+            Instruction::addi { rd, rs1, imm } => encode_i(0b0010011, rd, 0b000, rs1, imm),
+            Instruction::slti { rd, rs1, imm } => encode_i(0b0010011, rd, 0b010, rs1, imm),
+            Instruction::sltiu { rd, rs1, imm } => encode_i(0b0010011, rd, 0b011, rs1, imm),
+            Instruction::xori { rd, rs1, imm } => encode_i(0b0010011, rd, 0b100, rs1, imm),
+            Instruction::ori { rd, rs1, imm } => encode_i(0b0010011, rd, 0b110, rs1, imm),
+            Instruction::andi { rd, rs1, imm } => encode_i(0b0010011, rd, 0b111, rs1, imm),
+            Instruction::slli { rd, rs1, shamt } => {
+                encode_i_shift(0b0010011, rd, 0b001, rs1, shamt, 0x00)
+            }
+            Instruction::srli { rd, rs1, shamt } => {
+                encode_i_shift(0b0010011, rd, 0b101, rs1, shamt, 0x00)
+            }
+            Instruction::srai { rd, rs1, shamt } => {
+                encode_i_shift(0b0010011, rd, 0b101, rs1, shamt, 0x20)
+            }
+
+            // Register Arithmetic (R-type)
+            Instruction::add { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b000, rs1, rs2, 0x00),
+            Instruction::sub { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b000, rs1, rs2, 0x20),
+            Instruction::sll { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b001, rs1, rs2, 0x00),
+            Instruction::slt { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b010, rs1, rs2, 0x00),
+            Instruction::sltu { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b011, rs1, rs2, 0x00),
+            Instruction::xor { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b100, rs1, rs2, 0x00),
+            Instruction::srl { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b101, rs1, rs2, 0x00),
+            Instruction::sra { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b101, rs1, rs2, 0x20),
+            Instruction::or { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b110, rs1, rs2, 0x00),
+            Instruction::and { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b111, rs1, rs2, 0x00),
+
+            // System & Sync
+            Instruction::fence => 0x0000000F,
+            Instruction::ecall => 0x00000073,
+            Instruction::ebreak => 0x00100073,
+        }
+    }
+}
+
+#[inline(always)]
+fn encode_r(opcode: u32, rd: usize, funct3: u32, rs1: usize, rs2: usize, funct7: u32) -> u32 {
+    opcode
+        | (((rd as u32) & 0x1F) << 7)
+        | ((funct3 & 0x7) << 12)
+        | (((rs1 as u32) & 0x1F) << 15)
+        | (((rs2 as u32) & 0x1F) << 20)
+        | ((funct7 & 0x7F) << 25)
+}
+
+#[inline(always)]
+fn encode_i(opcode: u32, rd: usize, funct3: u32, rs1: usize, imm: i32) -> u32 {
+    opcode
+        | (((rd as u32) & 0x1F) << 7)
+        | ((funct3 & 0x7) << 12)
+        | (((rs1 as u32) & 0x1F) << 15)
+        | (((imm as u32) & 0xFFF) << 20)
+}
+
+#[inline(always)]
+fn encode_i_shift(opcode: u32, rd: usize, funct3: u32, rs1: usize, shamt: u32, funct7: u32) -> u32 {
+    opcode
+        | (((rd as u32) & 0x1F) << 7)
+        | ((funct3 & 0x7) << 12)
+        | (((rs1 as u32) & 0x1F) << 15)
+        | ((shamt & 0x1F) << 20)
+        | ((funct7 & 0x7F) << 25)
+}
+
+#[inline(always)]
+fn encode_s(opcode: u32, funct3: u32, rs1: usize, rs2: usize, imm: i32) -> u32 {
+    let imm_u = imm as u32;
+    opcode
+        | ((imm_u & 0x1F) << 7)
+        | ((funct3 & 0x7) << 12)
+        | (((rs1 as u32) & 0x1F) << 15)
+        | (((rs2 as u32) & 0x1F) << 20)
+        | (((imm_u >> 5) & 0x7F) << 25)
+}
+
+#[inline(always)]
+fn encode_b(opcode: u32, funct3: u32, rs1: usize, rs2: usize, imm: i32) -> u32 {
+    let imm_u = imm as u32;
+    let b_12 = (imm_u >> 12) & 1;
+    let b_11 = (imm_u >> 11) & 1;
+    let b_10_5 = (imm_u >> 5) & 0x3F;
+    let b_4_1 = (imm_u >> 1) & 0xF;
+    opcode
+        | (b_11 << 7)
+        | (b_4_1 << 8)
+        | ((funct3 & 0x7) << 12)
+        | (((rs1 as u32) & 0x1F) << 15)
+        | (((rs2 as u32) & 0x1F) << 20)
+        | (b_10_5 << 25)
+        | (b_12 << 31)
+}
+
+#[inline(always)]
+fn encode_u(opcode: u32, rd: usize, imm: i32) -> u32 {
+    opcode | (((rd as u32) & 0x1F) << 7) | ((imm as u32) & !0xFFF)
+}
+
+#[inline(always)]
+fn encode_j(opcode: u32, rd: usize, imm: i32) -> u32 {
+    let imm_u = imm as u32;
+    let j_20 = (imm_u >> 20) & 1;
+    let j_19_12 = (imm_u >> 12) & 0xFF;
+    let j_11 = (imm_u >> 11) & 1;
+    let j_10_1 = (imm_u >> 1) & 0x3FF;
+    opcode
+        | (((rd as u32) & 0x1F) << 7)
+        | (j_19_12 << 12)
+        | (j_11 << 20)
+        | (j_10_1 << 21)
+        | (j_20 << 31)
 }
 
 #[cfg(test)]
@@ -688,5 +834,240 @@ mod tests {
         assert_eq!(parse(0x00000000), None);
         assert_eq!(parse(0xFFFFFFFF), None);
         assert_eq!(parse(0x0000007B), None);
+    }
+
+    fn assert_instruction_roundtrip(instr: Instruction) {
+        let word = instr.encode();
+        let parsed = parse(word);
+        assert_eq!(
+            parsed,
+            Some(instr),
+            "parse(encode({:?})) failed! word=0x{:08X}",
+            instr,
+            word
+        );
+        assert_eq!(
+            parsed.unwrap().encode(),
+            word,
+            "re-encode of parsed instruction mismatch for {:?}",
+            instr
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_u_type() {
+        let test_cases = [
+            Instruction::lui {
+                rd: 1,
+                imm: 0x12345000,
+            },
+            Instruction::lui {
+                rd: 15,
+                imm: -0x80000000,
+            },
+            Instruction::lui {
+                rd: 31,
+                imm: 0x00001000,
+            },
+            Instruction::lui {
+                rd: 0,
+                imm: 0x7FFFF000,
+            },
+            Instruction::auipc {
+                rd: 2,
+                imm: 0x00001000,
+            },
+            Instruction::auipc {
+                rd: 1,
+                imm: -0x1000,
+            },
+            Instruction::auipc {
+                rd: 16,
+                imm: 0x7FFFF000,
+            },
+            Instruction::auipc {
+                rd: 0,
+                imm: -0x80000000,
+            },
+        ];
+
+        for instr in test_cases {
+            assert_instruction_roundtrip(instr);
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_j_type() {
+        let test_cases = [
+            Instruction::jal { rd: 1, imm: 4 },
+            Instruction::jal { rd: 5, imm: 200 },
+            Instruction::jal { rd: 1, imm: -4 },
+            Instruction::jal {
+                rd: 0,
+                imm: -1048576,
+            },
+            Instruction::jal {
+                rd: 31,
+                imm: 1048574,
+            },
+            Instruction::jal { rd: 15, imm: 0 },
+        ];
+
+        for instr in test_cases {
+            assert_instruction_roundtrip(instr);
+        }
+
+        // Multiple combinations of registers and offsets
+        for rd in [0, 1, 10, 15, 31] {
+            for imm in [-1048576, -4, 0, 4, 1000, 1048574] {
+                assert_instruction_roundtrip(Instruction::jal { rd, imm });
+            }
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_jalr() {
+        let test_cases = [
+            Instruction::jalr {
+                rd: 1,
+                rs1: 2,
+                imm: 42,
+            },
+            Instruction::jalr {
+                rd: 1,
+                rs1: 2,
+                imm: -4,
+            },
+            Instruction::jalr {
+                rd: 0,
+                rs1: 1,
+                imm: 0,
+            }, // ret
+            Instruction::jalr {
+                rd: 31,
+                rs1: 30,
+                imm: 2047,
+            },
+            Instruction::jalr {
+                rd: 5,
+                rs1: 10,
+                imm: -2048,
+            },
+            Instruction::jalr {
+                rd: 0,
+                rs1: 0,
+                imm: 0,
+            },
+        ];
+
+        for instr in test_cases {
+            assert_instruction_roundtrip(instr);
+        }
+
+        for rd in [0, 1, 15, 31] {
+            for rs1 in [0, 1, 15, 31] {
+                for imm in [-2048, -4, 0, 4, 2047] {
+                    assert_instruction_roundtrip(Instruction::jalr { rd, rs1, imm });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_b_type() {
+        let offsets = [-4096, -8, -4, 0, 4, 8, 4094];
+
+        for &imm in &offsets {
+            for &(rs1, rs2) in &[(1, 2), (0, 15), (31, 30), (0, 0)] {
+                assert_instruction_roundtrip(Instruction::beq { rs1, rs2, imm });
+                assert_instruction_roundtrip(Instruction::bne { rs1, rs2, imm });
+                assert_instruction_roundtrip(Instruction::blt { rs1, rs2, imm });
+                assert_instruction_roundtrip(Instruction::bge { rs1, rs2, imm });
+                assert_instruction_roundtrip(Instruction::bltu { rs1, rs2, imm });
+                assert_instruction_roundtrip(Instruction::bgeu { rs1, rs2, imm });
+            }
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_loads() {
+        let offsets = [-2048, -4, 0, 4, 12, 2047];
+
+        for &imm in &offsets {
+            for &(rd, rs1) in &[(3, 4), (0, 1), (15, 31), (31, 0)] {
+                assert_instruction_roundtrip(Instruction::lb { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::lh { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::lw { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::lbu { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::lhu { rd, rs1, imm });
+            }
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_stores() {
+        let offsets = [-2048, -4, 0, 4, 12, 2047];
+
+        for &imm in &offsets {
+            for &(rs1, rs2) in &[(1, 2), (0, 1), (15, 31), (31, 0)] {
+                assert_instruction_roundtrip(Instruction::sb { rs1, rs2, imm });
+                assert_instruction_roundtrip(Instruction::sh { rs1, rs2, imm });
+                assert_instruction_roundtrip(Instruction::sw { rs1, rs2, imm });
+            }
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_i_type_alu() {
+        let immediates = [-2048, -42, 0, 1, 100, 2047];
+
+        for &imm in &immediates {
+            for &(rd, rs1) in &[(1, 2), (0, 15), (31, 30), (10, 0)] {
+                assert_instruction_roundtrip(Instruction::addi { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::slti { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::sltiu { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::xori { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::ori { rd, rs1, imm });
+                assert_instruction_roundtrip(Instruction::andi { rd, rs1, imm });
+            }
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_shifts() {
+        let shamts = [0, 1, 5, 16, 31];
+
+        for &shamt in &shamts {
+            for &(rd, rs1) in &[(1, 2), (0, 15), (31, 30), (10, 0)] {
+                assert_instruction_roundtrip(Instruction::slli { rd, rs1, shamt });
+                assert_instruction_roundtrip(Instruction::srli { rd, rs1, shamt });
+                assert_instruction_roundtrip(Instruction::srai { rd, rs1, shamt });
+            }
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_r_type_alu() {
+        let reg_pairs = [(1, 2, 3), (0, 15, 16), (31, 0, 31), (10, 11, 12), (0, 0, 0)];
+
+        for (rd, rs1, rs2) in reg_pairs {
+            assert_instruction_roundtrip(Instruction::add { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::sub { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::sll { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::slt { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::sltu { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::xor { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::srl { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::sra { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::or { rd, rs1, rs2 });
+            assert_instruction_roundtrip(Instruction::and { rd, rs1, rs2 });
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_system() {
+        assert_instruction_roundtrip(Instruction::fence);
+        assert_instruction_roundtrip(Instruction::ecall);
+        assert_instruction_roundtrip(Instruction::ebreak);
     }
 }

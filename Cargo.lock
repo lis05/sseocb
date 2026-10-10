@@ -35,12 +35,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "guest-tool"
+name = "int"
 version = "0.1.0"
 dependencies = [
- "object",
- "serde",
- "serde_json",
+ "rv32-isa",
 ]
 
 [[package]]
@@ -104,6 +102,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rv32-isa"
+version = "0.1.0"
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -149,6 +151,9 @@ dependencies = [
 [[package]]
 name = "sim"
 version = "0.1.0"
+dependencies = [
+ "rv32-isa",
+]
 
 [[package]]
 name = "simd-adler32"
@@ -165,6 +170,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tool"
+version = "0.1.0"
+dependencies = [
+ "object",
+ "rv32-isa",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

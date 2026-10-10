@@ -45,7 +45,7 @@ SSEOCB takes a different approach:
   guest code can call native code and be called from it.
 
 * **PLT stubs for address-taken functions.** Native code cannot jump into vP
-  directly. Before linking, `guest-tool pre` scans relocations to find every
+  directly. Before linking, `tool pre` scans relocations to find every
   function whose address is taken (function pointers, callbacks, tables). It
   generates a small physical stub for each one and redirects the symbol to that
   stub with a linker script. Direct calls between guest functions stay inside
@@ -64,8 +64,8 @@ iterations are in [`sseocbv1.txt`](sseocbv1.txt) and
 | Component | State |
 | :--- | :--- |
 | `crates/sim`: RV32I instruction-level simulator (memory bus, debugger, E2E tests) | ✅ Working |
-| `guest-tool pre`: relocation scan, PLT stubs, linker scripts | ✅ Working |
-| `guest-tool post`: extract vP from the linked image, emit PLT table | 🚧 Stub |
+| `tool pre`: relocation scan, PLT stubs, linker scripts | ✅ Working |
+| `tool post`: extract vP from the linked image, emit PLT table | 🚧 Stub |
 | Compression of vP | 🚧 Planned (blaris / graemi first, custom compressor later) |
 | Interpreter runtime | 🚧 Planned |
 | Virtualizing `.rodata` (currently only `.text` goes into vP) | 🚧 Planned |
@@ -74,8 +74,8 @@ iterations are in [`sseocbv1.txt`](sseocbv1.txt) and
 
 ## Workspace Structure
 
-* **`crates/guest-tool/`**: build-time tool for guest objects.
-  * `guest-tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>]`
+* **`crates/tool/`**: build-time tool for guest objects.
+  * `tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>]`
     scans `R_RISCV_32`, `R_RISCV_32_PCREL`, `R_RISCV_HI20`,
     `R_RISCV_PCREL_HI20` and `R_RISCV_PLT32` relocations for address-taken
     functions. It writes the following to the output directory:
@@ -84,12 +84,12 @@ iterations are in [`sseocbv1.txt`](sseocbv1.txt) and
     * `virtual.ld`: places guest code in the vP region (default base
       `0xFFF00000`, size 1 MiB)
     * `plt_index.json`: maps each symbol to its slot number
-  * `guest-tool post <linked.o> <output_dir>`: *(stub)* will extract the vP
+  * `tool post <linked.o> <output_dir>`: *(stub)* will extract the vP
     section and generate the PLT target table.
 * **`crates/sim/`**: RV32I simulator used as the test platform. It includes a
   configurable memory bus, an interactive debugger (`sim debug`) and bare-metal
   C end-to-end tests.
-* **`playground/`**: a minimal guest program for trying out `guest-tool`.
+* **`playground/`**: a minimal guest program for trying out `tool`.
 * **`scripts/`**: helpers for building bare-metal RV32 binaries and running the
   E2E tests.
 
