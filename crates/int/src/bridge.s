@@ -1,7 +1,44 @@
-.section .text.__sseocb_i_bridge, "ax", @progbits
+.section .text.__sseocb_i.bridge, "ax", @progbits
 
 # int operates in the top half of rv32i registers (x0, x16..x31) where it sees
 # x16..x30 as its x1..x15. x31 is scratch. Offset is 15.
+
+.globl __sseocb_i_entry
+__sseocb_i_entry:
+    # Setup guest stack
+    la x2, _g_stack_top
+    andi x2, x2, -16
+
+    # Setup int stack
+    la x17, _i_stack_top
+    andi x17, x17, -16
+
+    # Setup .data
+    la x28, _sidata
+    la x29, _sdata
+    la x30, _edata
+    1:
+        bgeu x29, x30, 2f
+        lw x31, 0(x28)
+        sw x31, 0(x29)
+        addi x28, x28, 4
+        addi x29, x29, 4
+        j 1b
+
+    2:
+
+    # Clear .bss
+    la x28, _sbss
+    la x29, _ebss
+    3:
+        bgeu x28, x29, 4f
+        sw x0, 0(x28)
+        addi x28, x28, 4
+        j 3b
+    4:
+
+    # Jump to main
+    j __sseocb_i_main
 
 .globl __sseocb_i_read_guest_reg
 __sseocb_i_read_guest_reg:

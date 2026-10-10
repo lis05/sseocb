@@ -108,6 +108,7 @@ fn print_usage() {
     eprintln!("  --stack-base <ADDR>   Stack base address (default: 3M / 0x00300000)");
     eprintln!("  --stack-len <SIZE>    Stack length (default: 4K / 0x00001000)");
     eprintln!("  --uart-base <ADDR>    UART MMIO address (default: 1G / 0x40000000)");
+    eprintln!("  --entry <ADDR>        Entry address (default: flash-base)");
     eprintln!(
         "  --max-cycles <CYCLES> Maximum cycle limit (default: 10M / 10000000, 0 for unlimited)"
     );
@@ -127,6 +128,7 @@ struct RunConfig {
     stack_len: u32,
     uart_base: u32,
     max_cycles: u64,
+    entry: Option<u32>,
     program_path: Option<String>,
 }
 
@@ -141,6 +143,7 @@ impl Default for RunConfig {
             stack_len: 0x1000,       // 4K
             uart_base: 0x4000_0000,  // 1G
             max_cycles: 10_000_000,  // 10M
+            entry: None,
             program_path: None,
         }
     }
@@ -282,6 +285,19 @@ fn parse_run_args(args: &[String]) -> Result<RunConfig, String> {
         } else if let Some(val) = arg.strip_prefix("--max-cycles=") {
             cfg.max_cycles = parse_u64_with_suffix(val)?;
             i += 1;
+        } else if arg == "--entry" || arg == "--pc" {
+            i += 1;
+            if i >= args.len() {
+                return Err("missing value for --entry".to_string());
+            }
+            cfg.entry = Some(parse_size_or_addr(&args[i])?);
+            i += 1;
+        } else if let Some(val) = arg
+            .strip_prefix("--entry=")
+            .or_else(|| arg.strip_prefix("--pc="))
+        {
+            cfg.entry = Some(parse_size_or_addr(val)?);
+            i += 1;
         } else if arg == "-h" || arg == "--help" {
             print_usage();
             process::exit(0);
@@ -366,7 +382,8 @@ fn execute_run(cfg: &RunConfig) -> Result<(), String> {
 
     let mut bus = create_bus(cfg, Some(&bytes))?;
     let mut cpu = CPU::new();
-    cpu.set_pc(cfg.flash_base);
+    let entry_pc = cfg.entry.unwrap_or(cfg.flash_base);
+    cpu.set_pc(entry_pc);
 
     let mut cycles_executed = 0u64;
 
@@ -601,7 +618,8 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
         );
     };
 
-    cpu.set_pc(cfg.flash_base);
+    let entry_pc = cfg.entry.unwrap_or(cfg.flash_base);
+    cpu.set_pc(entry_pc);
 
     println!("Debugger: loaded '{}' ({} bytes)", path, bytes.len());
     print_pc(&cpu);

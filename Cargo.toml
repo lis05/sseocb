@@ -17,8 +17,11 @@ panic = "abort"
 panic = "abort"
 
 [profile.release.package.int]
+opt-level = "s"
 codegen-units = 1
 strip = true
 
+[profile.release.package.rv32-isa]
+opt-level = "s"
 
 

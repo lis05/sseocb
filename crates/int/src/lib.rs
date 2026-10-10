@@ -11,3 +11,10 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     asm::emit_ebreak();
     loop {}
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn __sseocb_i_main() {
+    let _ = rv32_isa::parse(0x00000013);
+    asm::emit_ebreak();
+    loop {}
+}
