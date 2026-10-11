@@ -441,8 +441,8 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
 
     let mut s_content = String::from(
         ".section .rodata\n\
-        .global __sseocb_i_plt_vP\n\
-        __sseocb_i_plt_vP:\n",
+        .global __sseocb_i.plt_vP\n\
+        __sseocb_i.plt_vP:\n",
     );
 
     for (sym_name, slot) in entries {
