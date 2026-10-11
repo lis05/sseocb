@@ -6,6 +6,7 @@ use std::process;
 
 use object::{Object, ObjectSymbol, SymbolKind};
 use sim::cpu::{CPU, Error};
+use sim::instruction::Instruction;
 use sim::memory::{Permissions, bus::Bus, region::Region};
 
 fn main() {
@@ -730,6 +731,57 @@ fn resolve_loc_addr(
     }
 }
 
+fn annotate_auipc_addi(
+    prev_addr: u32,
+    prev_instr: Instruction,
+    addi_rs1: usize,
+    addi_imm: i32,
+    symbol_list: &[(u32, String)],
+) -> Option<String> {
+    if let Instruction::auipc {
+        rd: auipc_rd,
+        imm: auipc_imm,
+    } = prev_instr
+        && auipc_rd == addi_rs1
+        && addi_rs1 != 0
+    {
+        let target_addr = prev_addr
+            .wrapping_add(auipc_imm as u32)
+            .wrapping_add_signed(addi_imm);
+        let annotation =
+            if let Some((sym_name, offset)) = find_closest_symbol(target_addr, symbol_list) {
+                if offset == 0 {
+                    format!(" -> {:#010x} <{}>", target_addr, sym_name)
+                } else {
+                    format!(" -> {:#010x} <{}+{}>", target_addr, sym_name, offset)
+                }
+            } else {
+                format!(" -> {:#010x}", target_addr)
+            };
+        return Some(annotation);
+    }
+    None
+}
+
+fn resolve_auipc_addi_annotation(
+    addr: u32,
+    instr: &Instruction,
+    bus: &Bus,
+    symbol_list: &[(u32, String)],
+) -> Option<String> {
+    if let Instruction::addi { rs1, imm, .. } = instr
+        && *rs1 != 0
+    {
+        let prev_addr = addr.wrapping_sub(4);
+        if let Ok(prev_raw) = bus.read_u32(prev_addr, Permissions::RO)
+            && let Some(prev_instr) = sim::instruction::parse(prev_raw)
+        {
+            return annotate_auipc_addi(prev_addr, prev_instr, *rs1, *imm, symbol_list);
+        }
+    }
+    None
+}
+
 fn parse_mem_type(s: &str) -> Option<MemType> {
     let s = s.trim().to_lowercase();
     let mut size = None;
@@ -1223,7 +1275,13 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                     match bus.read_u32(addr, Permissions::RO) {
                         Ok(raw) => match sim::instruction::parse(raw) {
                             Some(instr) => {
-                                println!("{}{:#010x}{}: {:?}", bp_col, addr, sym_tag, instr)
+                                let annotation =
+                                    resolve_auipc_addi_annotation(addr, &instr, &bus, &symbol_list)
+                                        .unwrap_or_default();
+                                println!(
+                                    "{}{:#010x}{}: {}{}",
+                                    bp_col, addr, sym_tag, instr, annotation
+                                )
                             }
                             None => {
                                 println!(
@@ -1516,5 +1574,54 @@ mod tests {
             resolve_loc_addr(&["2105344,", "-1224"], &symbols, pc, &symbol_list),
             Ok(0x301f80)
         );
+    }
+
+    #[test]
+    fn test_annotate_auipc_addi() {
+        let symbol_list = vec![
+            (0x100000, "main".to_string()),
+            (0x301f80, "_g_stack_top".to_string()),
+        ];
+
+        // Exact match (offset == 0)
+        let prev_instr = Instruction::auipc {
+            rd: 2,
+            imm: 2105344,
+        };
+        let ann = annotate_auipc_addi(0x100400, prev_instr, 2, -1152, &symbol_list);
+        assert_eq!(ann, Some(" -> 0x00301f80 <_g_stack_top>".to_string()));
+
+        // Offset > 0
+        let ann_off = annotate_auipc_addi(0x100400, prev_instr, 2, -1148, &symbol_list);
+        assert_eq!(ann_off, Some(" -> 0x00301f84 <_g_stack_top+4>".to_string()));
+
+        // No symbols
+        let ann_nosym = annotate_auipc_addi(0x100400, prev_instr, 2, -1152, &[]);
+        assert_eq!(ann_nosym, Some(" -> 0x00301f80".to_string()));
+
+        // Mismatched register (auipc rd: 2, addi rs1: 3)
+        let ann_mismatch = annotate_auipc_addi(0x100400, prev_instr, 3, -1152, &symbol_list);
+        assert_eq!(ann_mismatch, None);
+
+        // Register x0 (rs1: 0)
+        let ann_x0 = annotate_auipc_addi(
+            0x100400,
+            Instruction::auipc {
+                rd: 0,
+                imm: 2105344,
+            },
+            0,
+            -1152,
+            &symbol_list,
+        );
+        assert_eq!(ann_x0, None);
+
+        // Non-auipc previous instruction
+        let prev_lui = Instruction::lui {
+            rd: 2,
+            imm: 0x200000,
+        };
+        let ann_lui = annotate_auipc_addi(0x100400, prev_lui, 2, -1152, &symbol_list);
+        assert_eq!(ann_lui, None);
     }
 }

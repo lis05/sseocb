@@ -119,6 +119,7 @@ fn collect_sections_for_vp(
     dir: &Path,
     vpbase: u64,
     vpsize: u64,
+    entry: &str,
 ) -> std::io::Result<()> {
     let mut script = format!(
         "MEMORY\n\
@@ -127,7 +128,7 @@ fn collect_sections_for_vp(
         }}\n\n\
         SECTIONS\n\
         {{\n    \
-            .__sseocb_g_vP : {{\n",
+            .__sseocb_g.vP : {{\n",
     );
     for section in file.sections() {
         if section.kind() != SectionKind::Text {
@@ -138,7 +139,17 @@ fn collect_sections_for_vp(
             script.push_str(&format!("        *({name})\n"));
         }
     }
-    script.push_str("        . = ALIGN(4);\n    } > __SSEOCB_G_VIRTUAL\n}\n");
+    script.push_str(&format!(
+        "        . = ALIGN(4);\n    \
+            }} > __SSEOCB_G_VIRTUAL\n\n    \
+            __sseocb_g_vpbase = ORIGIN(__SSEOCB_G_VIRTUAL);\n    \
+            __sseocb_g_vpsize = SIZEOF(.__sseocb_g.vP);\n    \
+            __sseocb_g_vpend  = ADDR(.__sseocb_g.vP) + SIZEOF(.__sseocb_g.vP);\n    \
+            __sseocb_g_entry  = {entry} - __sseocb_g_vpbase;\n    \
+            __sseocb_i_vpsize = SIZEOF(.__sseocb_g.vP);\n\
+        }}\n"
+    ));
+
     fs::write(dir.join("virtual.ld"), script)?;
 
     Ok(())
@@ -149,6 +160,7 @@ fn run_pre(
     output_dir: &str,
     vpbase: u64,
     vpsize: u64,
+    entry: &str,
 ) -> Result<(), Box<dyn Error>> {
     let data = fs::read(input_file)?;
     let file = object::File::parse(&*data)?;
@@ -170,7 +182,7 @@ fn run_pre(
     fs::create_dir_all(output_dir)?;
 
     emit_plt_for_addressable(&addressable_symbols, output_dir)?;
-    collect_sections_for_vp(&file, output_dir, vpbase, vpsize)?;
+    collect_sections_for_vp(&file, output_dir, vpbase, vpsize, entry)?;
 
     let mut slots_json = serde_json::to_string_pretty(&addressable_symbols)?;
     slots_json.push('\n');
@@ -424,8 +436,8 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
 
     let vp_section = file
         .sections()
-        .find(|s| s.name().map(|n| n == ".__sseocb_g_vP").unwrap_or(false))
-        .ok_or_else(|| "Section '.__sseocb_g_vP' not found in linked ELF".to_string())?;
+        .find(|s| s.name().map(|n| n == ".__sseocb_g.vP").unwrap_or(false))
+        .ok_or_else(|| "Section '.__sseocb_g.vP' not found in linked ELF".to_string())?;
 
     let vp_base = vp_section.address();
 
@@ -455,7 +467,7 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
 
         if *sym_addr < vp_base {
             return Err(format!(
-                "Symbol '{}' address 0x{:08x} is below __sseocb_g_vP base 0x{:08x}",
+                "Symbol '{}' address 0x{:08x} is below __sseocb_g.vP base 0x{:08x}",
                 sym_name, sym_addr, vp_base
             )
             .into());
@@ -473,7 +485,7 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
         ));
     }
 
-    let plt_vp_path = out_dir.join("plt_vp.s");
+    let plt_vp_path = out_dir.join("plt_vP.s");
     fs::write(&plt_vp_path, s_content)?;
     println!("Generated '{}'", plt_vp_path.display());
 
@@ -481,11 +493,21 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
     let vp_raw_path = out_dir.join("vP_raw.bin");
     fs::write(&vp_raw_path, vp_data)?;
     println!(
-        "Extracted '.__sseocb_g_vP' ({} bytes) -> '{}'",
+        "Extracted '.__sseocb_g.vP' ({} bytes) -> '{}'",
         vp_data.len(),
         vp_raw_path.display()
     );
 
+    let vp_path = out_dir.join("vP.s");
+    let vp = ".section .__sseocb_i.vP, \"a\", @progbits\n\
+        .globl __sseocb_i_vpbase\n\
+        .globl __sseocb_i_vpend\n\
+        .p2align 2\n\
+        __sseocb_i_vpbase:\n    \
+            .incbin \"artifacts/vP_raw.bin\"\n\
+        __sseocb_i_vpend:\n";
+    fs::write(&vp_path, vp)?;
+    println!("Generated '{}'", vp_path.display());
     Ok(())
 }
 
@@ -493,7 +515,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: tool <pre|post|promote|remap> <args...>");
-        eprintln!("  tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>]");
+        eprintln!(
+            "  tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
+        );
         eprintln!("  tool post <linked_o> <output_dir>");
         eprintln!("  tool promote <input.o> <output.o> [rv32i|rv32e]");
         eprintln!("  tool remap <input.o> <output.o>");
@@ -519,13 +543,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         "pre" => {
             if args.len() < 4 {
                 eprintln!(
-                    "Usage: tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>]"
+                    "Usage: tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
                 );
                 std::process::exit(1);
             }
 
             let mut vpbase = 0xFFF0_0000u64; // Default: 4 GiB - 1 MiB
             let mut vpsize = 0x0010_0000u64; // Default: 1 MiB
+            let mut entry = "_start".to_string(); // Default: _start
 
             let mut i = 4;
             while i < args.len() {
@@ -546,6 +571,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                         vpsize = parse_size(&args[i])?;
                     }
+                    "--entry" => {
+                        i += 1;
+                        if i >= args.len() {
+                            eprintln!("Missing value for --entry");
+                            std::process::exit(1);
+                        }
+                        entry = args[i].clone();
+                    }
                     other => {
                         eprintln!("Unknown option '{}'", other);
                         std::process::exit(1);
@@ -554,7 +587,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 i += 1;
             }
 
-            run_pre(&args[2], &args[3], vpbase, vpsize)?;
+            run_pre(&args[2], &args[3], vpbase, vpsize, &entry)?;
         }
         "post" => {
             if args.len() < 4 {

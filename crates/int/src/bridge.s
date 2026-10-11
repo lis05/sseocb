@@ -136,3 +136,6 @@ __sseocb_i_write_guest_reg:
         mv x15, x26
         jr x16
 
+.globl __sseocb_i_plt_call
+__sseocb_i_plt_call:
+

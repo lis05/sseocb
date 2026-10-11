@@ -344,6 +344,68 @@ fn encode_j(opcode: u32, rd: usize, imm: i32) -> u32 {
         | (j_20 << 31)
 }
 
+impl core::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            // Upper Immediate (U-type)
+            Instruction::lui { rd, imm } => write!(f, "lui x{}, {}", rd, imm),
+            Instruction::auipc { rd, imm } => write!(f, "auipc x{}, {}", rd, imm),
+
+            // Unconditional Jumps
+            Instruction::jal { rd, imm } => write!(f, "jal x{}, {}", rd, imm),
+            Instruction::jalr { rd, rs1, imm } => write!(f, "jalr x{}, {}(x{})", rd, imm, rs1),
+
+            // Conditional Branches (B-type)
+            Instruction::beq { rs1, rs2, imm } => write!(f, "beq x{}, x{}, {}", rs1, rs2, imm),
+            Instruction::bne { rs1, rs2, imm } => write!(f, "bne x{}, x{}, {}", rs1, rs2, imm),
+            Instruction::blt { rs1, rs2, imm } => write!(f, "blt x{}, x{}, {}", rs1, rs2, imm),
+            Instruction::bge { rs1, rs2, imm } => write!(f, "bge x{}, x{}, {}", rs1, rs2, imm),
+            Instruction::bltu { rs1, rs2, imm } => write!(f, "bltu x{}, x{}, {}", rs1, rs2, imm),
+            Instruction::bgeu { rs1, rs2, imm } => write!(f, "bgeu x{}, x{}, {}", rs1, rs2, imm),
+
+            // Loads (I-type)
+            Instruction::lb { rd, rs1, imm } => write!(f, "lb x{}, {}(x{})", rd, imm, rs1),
+            Instruction::lh { rd, rs1, imm } => write!(f, "lh x{}, {}(x{})", rd, imm, rs1),
+            Instruction::lw { rd, rs1, imm } => write!(f, "lw x{}, {}(x{})", rd, imm, rs1),
+            Instruction::lbu { rd, rs1, imm } => write!(f, "lbu x{}, {}(x{})", rd, imm, rs1),
+            Instruction::lhu { rd, rs1, imm } => write!(f, "lhu x{}, {}(x{})", rd, imm, rs1),
+
+            // Stores (S-type)
+            Instruction::sb { rs1, rs2, imm } => write!(f, "sb x{}, {}(x{})", rs2, imm, rs1),
+            Instruction::sh { rs1, rs2, imm } => write!(f, "sh x{}, {}(x{})", rs2, imm, rs1),
+            Instruction::sw { rs1, rs2, imm } => write!(f, "sw x{}, {}(x{})", rs2, imm, rs1),
+
+            // Immediate Arithmetic (I-type)
+            Instruction::addi { rd, rs1, imm } => write!(f, "addi x{}, x{}, {}", rd, rs1, imm),
+            Instruction::slti { rd, rs1, imm } => write!(f, "slti x{}, x{}, {}", rd, rs1, imm),
+            Instruction::sltiu { rd, rs1, imm } => write!(f, "sltiu x{}, x{}, {}", rd, rs1, imm),
+            Instruction::xori { rd, rs1, imm } => write!(f, "xori x{}, x{}, {}", rd, rs1, imm),
+            Instruction::ori { rd, rs1, imm } => write!(f, "ori x{}, x{}, {}", rd, rs1, imm),
+            Instruction::andi { rd, rs1, imm } => write!(f, "andi x{}, x{}, {}", rd, rs1, imm),
+            Instruction::slli { rd, rs1, shamt } => write!(f, "slli x{}, x{}, {}", rd, rs1, shamt),
+            Instruction::srli { rd, rs1, shamt } => write!(f, "srli x{}, x{}, {}", rd, rs1, shamt),
+            Instruction::srai { rd, rs1, shamt } => write!(f, "srai x{}, x{}, {}", rd, rs1, shamt),
+
+            // Register Arithmetic (R-type)
+            Instruction::add { rd, rs1, rs2 } => write!(f, "add x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::sub { rd, rs1, rs2 } => write!(f, "sub x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::sll { rd, rs1, rs2 } => write!(f, "sll x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::slt { rd, rs1, rs2 } => write!(f, "slt x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::sltu { rd, rs1, rs2 } => write!(f, "sltu x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::xor { rd, rs1, rs2 } => write!(f, "xor x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::srl { rd, rs1, rs2 } => write!(f, "srl x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::sra { rd, rs1, rs2 } => write!(f, "sra x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::or { rd, rs1, rs2 } => write!(f, "or x{}, x{}, x{}", rd, rs1, rs2),
+            Instruction::and { rd, rs1, rs2 } => write!(f, "and x{}, x{}, x{}", rd, rs1, rs2),
+
+            // System & Sync
+            Instruction::fence => write!(f, "fence"),
+            Instruction::ecall => write!(f, "ecall"),
+            Instruction::ebreak => write!(f, "ebreak"),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::identity_op)]
 mod tests {
@@ -1069,5 +1131,106 @@ mod tests {
         assert_instruction_roundtrip(Instruction::fence);
         assert_instruction_roundtrip(Instruction::ecall);
         assert_instruction_roundtrip(Instruction::ebreak);
+    }
+
+    #[test]
+    fn test_display() {
+        extern crate alloc;
+        use alloc::format;
+
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::auipc {
+                    rd: 2,
+                    imm: 2105344
+                }
+            ),
+            "auipc x2, 2105344"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::addi {
+                    rd: 2,
+                    rs1: 2,
+                    imm: -1152
+                }
+            ),
+            "addi x2, x2, -1152"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::lw {
+                    rd: 10,
+                    rs1: 2,
+                    imm: 4
+                }
+            ),
+            "lw x10, 4(x2)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::sw {
+                    rs1: 2,
+                    rs2: 10,
+                    imm: 8
+                }
+            ),
+            "sw x10, 8(x2)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::jalr {
+                    rd: 1,
+                    rs1: 2,
+                    imm: 0
+                }
+            ),
+            "jalr x1, 0(x2)"
+        );
+        assert_eq!(
+            format!("{}", Instruction::jal { rd: 1, imm: 16 }),
+            "jal x1, 16"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::beq {
+                    rs1: 1,
+                    rs2: 2,
+                    imm: -4
+                }
+            ),
+            "beq x1, x2, -4"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::add {
+                    rd: 1,
+                    rs1: 2,
+                    rs2: 3
+                }
+            ),
+            "add x1, x2, x3"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Instruction::slli {
+                    rd: 1,
+                    rs1: 2,
+                    shamt: 5
+                }
+            ),
+            "slli x1, x2, 5"
+        );
+        assert_eq!(format!("{}", Instruction::fence), "fence");
+        assert_eq!(format!("{}", Instruction::ecall), "ecall");
+        assert_eq!(format!("{}", Instruction::ebreak), "ebreak");
     }
 }

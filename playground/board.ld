@@ -12,9 +12,21 @@ SECTIONS
         . = ALIGN(4);
     } > FLASH
 
+    .text.__sseocb_i.bridge : {
+        . = ALIGN(4);
+        *(.text.__sseocb_i.bridge)
+        . = ALIGN(4);
+    } > FLASH
+
     .rodata : {
         . = ALIGN(4);
         *(.rodata .rodata.*)
+        . = ALIGN(4);
+    } > FLASH
+
+    .__sseocb_i.vP : {
+        . = ALIGN(4);
+        *(.__sseocb_i.vP)
         . = ALIGN(4);
     } > FLASH
 

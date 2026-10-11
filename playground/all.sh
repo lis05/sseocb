@@ -1,5 +1,13 @@
 set -e
 
+
+# Build everything expect interpreter
+cargo build -p tool
+cargo build -p sim
+cargo build -p rv32-isa --release
+ln -sf ../target/debug/sim sim
+ln -sf ../target/debug/tool tool
+
 SIM_FLASH_BASE=1M
 SIM_FLASH_LEN=32K
 SIM_SRAM_BASE=2M
@@ -24,8 +32,8 @@ sim() {
         "$@"
 }
 
-export SSEOCB_G_VPBASE=0xfff00000
-export SSEOCB_G_VPSIZE=0x00100000
+SSEOCB_G_VPBASE=0xfff00000
+SSEOCB_G_VPSIZE=0x00100000
 
 # Cleanup
 rm -rf artifacts main.o pre.o pre.map bridge.o int.o final.o final.bin
@@ -44,13 +52,8 @@ clang --target=riscv32 \
       -O0 \
       -c main.c -o artifacts/main.o
 
-# Build tool and sim
-cargo build -p tool
-cargo build -p sim
-ln -sf ../target/debug/sim sim
-
 # Generate pre artifacts
-./tool pre artifacts/main.o artifacts --vpbase $SSEOCB_G_VPBASE --vpsize $SSEOCB_G_VPSIZE
+./tool pre artifacts/main.o artifacts --vpbase $SSEOCB_G_VPBASE --vpsize $SSEOCB_G_VPSIZE --entry _start
 
 # Promote to rv32i
 ./tool promote artifacts/main.o artifacts/main.o
@@ -78,10 +81,6 @@ clang --target=riscv32 \
 
 cat artifacts/pre.map
 llvm-nm artifacts/pre.o
-
-# temporary
-export SSEOCB_I_VPBASE=0x00100000
-export SSEOCB_I_VPSIZE=0x00100000
 
 # Build int
 cargo +nightly build -p int --release --target riscv32e-unknown-none-elf -Z build-std=core,compiler_builtins
@@ -117,12 +116,13 @@ clang --target=riscv32 \
       -Wl,-T,artifacts/virtual.ld \
       -Wl,-T,artifacts/plt.ld \
       -Wl,@artifacts/plt.wrap \
-      -Wl,--unresolved-symbols=ignore-all \
       -Wl,-e,__sseocb_i_entry \
       -Wl,--gc-sections \
+      -Wl,-Map=artifacts/final.map \
       artifacts/main.o \
       artifacts/trampolines.s \
-      artifacts/plt_vp.s \
+      artifacts/plt_vP.s \
+      artifacts/vP.s \
       artifacts/bridge.o \
       artifacts/int.o \
       -o artifacts/final.o
@@ -132,7 +132,7 @@ llvm-readelf -a artifacts/final.o
 llvm-size -A -d artifacts/final.o
 
 # Extract flat binary and run in simulator
-llvm-objcopy -O binary artifacts/final.o artifacts/final.bin
+llvm-objcopy -O binary -R .__sseocb_g.vP artifacts/final.o artifacts/final.bin
 ENTRY_ADDR=$(llvm-readelf -h artifacts/final.o | grep "Entry point address:" | awk '{print $4}')
 echo "=== Running in sim (entry: $ENTRY_ADDR) ==="
 sim debug --elf artifacts/final.o --entry "$ENTRY_ADDR" artifacts/final.bin
