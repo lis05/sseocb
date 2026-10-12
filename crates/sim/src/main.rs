@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use object::{Object, ObjectSymbol, SymbolKind};
 use sim::cpu::{CPU, Error};
@@ -380,8 +381,9 @@ fn create_bus(cfg: &RunConfig, program_bytes: Option<&[u8]>) -> Result<Bus, Stri
     let uart = Region::try_new("UART", cfg.uart_base, Permissions::RW, vec![0u8; 4])
         .map_err(|e| format!("failed to create UART region: {:?}", e))?
         .with_write_proxy(|_addr, buf| {
-            std::io::stdout()
-                .write_all(buf)
+            let mut out = std::io::stdout();
+            out.write_all(buf)
+                .and_then(|_| out.flush())
                 .map_err(|_| sim::memory::region::Error::AddressViolation)
         });
     bus.add(uart)
@@ -928,7 +930,30 @@ fn print_memory_val(addr: u32, mtype: &MemType, bus: &Bus) {
     }
 }
 
+static DEBUG_RUNNING: AtomicBool = AtomicBool::new(false);
+static DEBUG_INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn sigint_handler(_sig: i32) {
+    if DEBUG_RUNNING.load(Ordering::Relaxed) {
+        if DEBUG_INTERRUPTED.swap(true, Ordering::Relaxed) {
+            process::exit(130);
+        }
+    } else {
+        process::exit(130);
+    }
+}
+
+unsafe extern "C" {
+    fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+}
+
+const SIGINT: i32 = 2;
+
 fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
+    unsafe {
+        signal(SIGINT, sigint_handler);
+    }
+
     let path = cfg
         .program_path
         .as_deref()
@@ -1219,8 +1244,8 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                 }
             }
             "i" => {
-                let (count, base_addr) = if parts.len() == 1 {
-                    (1, cpu.get_pc())
+                let (n, center_addr) = if parts.len() == 1 {
+                    (0, cpu.get_pc())
                 } else if parts.len() == 2 {
                     let arg = parts[1];
                     if arg.starts_with('$')
@@ -1231,17 +1256,17 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                         || arg.contains('-')
                     {
                         match parse_expr(arg, &symbols, cpu.get_pc()) {
-                            Ok(addr) => (1, addr),
+                            Ok(addr) => (0, addr),
                             Err(e) => {
                                 println!("Invalid address '{}': {}", arg, e);
                                 continue;
                             }
                         }
                     } else if let Some(c) = parse_number(arg) {
-                        (c as usize, cpu.get_pc())
+                        (c as i64, cpu.get_pc())
                     } else {
                         match parse_expr(arg, &symbols, cpu.get_pc()) {
-                            Ok(addr) => (1, addr),
+                            Ok(addr) => (0, addr),
                             Err(_) => {
                                 println!("Invalid count or address: '{}'", arg);
                                 continue;
@@ -1253,7 +1278,7 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                     if combined.len() >= 2 {
                         if let Some(c) = parse_number(&combined[0]) {
                             match parse_expr(&combined[1], &symbols, cpu.get_pc()) {
-                                Ok(addr) => (c as usize, addr),
+                                Ok(addr) => (c as i64, addr),
                                 Err(e) => {
                                     println!("Invalid address '{}': {}", combined[1], e);
                                     continue;
@@ -1261,7 +1286,7 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                             }
                         } else if let Some(c) = parse_number(&combined[1]) {
                             match parse_expr(&combined[0], &symbols, cpu.get_pc()) {
-                                Ok(addr) => (c as usize, addr),
+                                Ok(addr) => (c as i64, addr),
                                 Err(e) => {
                                     println!("Invalid address '{}': {}", combined[0], e);
                                     continue;
@@ -1276,7 +1301,7 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                         }
                     } else if combined.len() == 1 {
                         match parse_expr(&combined[0], &symbols, cpu.get_pc()) {
-                            Ok(addr) => (1, addr),
+                            Ok(addr) => (0, addr),
                             Err(e) => {
                                 println!("Invalid address '{}': {}", combined[0], e);
                                 continue;
@@ -1288,19 +1313,24 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                     }
                 };
 
-                for idx in 0..count {
-                    let addr = base_addr.wrapping_add((idx as u32) * 4);
-                    let bp_col = if breakpoints.contains(&addr) {
-                        "b "
-                    } else {
-                        "  "
+                for offset in -n..=n {
+                    let addr = center_addr.wrapping_add((offset * 4) as u32);
+                    let has_bp = breakpoints.contains(&addr);
+                    let is_curr =
+                        addr == cpu.get_pc() || (center_addr != cpu.get_pc() && offset == 0);
+                    let prefix = match (has_bp, is_curr) {
+                        (true, true) => "b>",
+                        (false, true) => "->",
+                        (true, false) => "b ",
+                        (false, false) => "  ",
                     };
-                    let sym_tag =
-                        if let Some((sym_name, offset)) = find_closest_symbol(addr, &symbol_list) {
-                            format!(" <{}+{}>", sym_name, offset)
-                        } else {
-                            String::new()
-                        };
+                    let sym_tag = if let Some((sym_name, offset_sym)) =
+                        find_closest_symbol(addr, &symbol_list)
+                    {
+                        format!(" <{}+{}>", sym_name, offset_sym)
+                    } else {
+                        String::new()
+                    };
                     match bus.read_u32(addr, Permissions::RO) {
                         Ok(raw) => match sim::instruction::parse(raw) {
                             Some(instr) => {
@@ -1309,19 +1339,18 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                                         .unwrap_or_default();
                                 println!(
                                     "{}{:#010x}{}: {}{}",
-                                    bp_col, addr, sym_tag, instr, annotation
+                                    prefix, addr, sym_tag, instr, annotation
                                 )
                             }
                             None => {
                                 println!(
                                     "{}{:#010x}{}: <unknown instruction: {:#010x}>",
-                                    bp_col, addr, sym_tag, raw
+                                    prefix, addr, sym_tag, raw
                                 )
                             }
                         },
                         Err(e) => {
-                            println!("{}{:#010x}{}: <read error: {:?}>", bp_col, addr, sym_tag, e);
-                            break;
+                            println!("{}{:#010x}{}: <read error: {:?}>", prefix, addr, sym_tag, e);
                         }
                     }
                 }
@@ -1404,32 +1433,20 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
             "cycles" => {
                 println!("Cycles executed: {}", cycles_executed);
             }
-            "s" => match cpu.step(&mut bus) {
-                Ok(_) => {
-                    cycles_executed += 1;
-                    let pc = cpu.get_pc();
-                    if breakpoints.contains(&pc) {
-                        println!("breakpoint {:#010x}", pc);
-                    } else {
-                        print_pc(&cpu);
-                    }
+            "s" => {
+                if let Ok(raw) = bus.read_u32(cpu.get_pc(), Permissions::RX)
+                    && let Some(Instruction::ebreak) = sim::instruction::parse(raw)
+                {
+                    cpu.set_pc(cpu.get_pc().wrapping_add(4));
                 }
-                Err(e) => {
-                    if e == Error::Ebreak && cfg.stats {
-                        println!("Cycles executed before ebreak: {}", cycles_executed);
-                    }
-                    println!("Halted: {:?}", e);
-                    print_pc(&cpu);
-                }
-            },
-            "c" => loop {
                 match cpu.step(&mut bus) {
                     Ok(_) => {
                         cycles_executed += 1;
                         let pc = cpu.get_pc();
                         if breakpoints.contains(&pc) {
                             println!("breakpoint {:#010x}", pc);
-                            break;
+                        } else {
+                            print_pc(&cpu);
                         }
                     }
                     Err(e) => {
@@ -1438,10 +1455,49 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                         }
                         println!("Halted: {:?}", e);
                         print_pc(&cpu);
-                        break;
                     }
                 }
-            },
+            }
+            "c" => {
+                DEBUG_INTERRUPTED.store(false, Ordering::Relaxed);
+                DEBUG_RUNNING.store(true, Ordering::Relaxed);
+                if let Ok(raw) = bus.read_u32(cpu.get_pc(), Permissions::RX)
+                    && let Some(Instruction::ebreak) = sim::instruction::parse(raw)
+                {
+                    cpu.set_pc(cpu.get_pc().wrapping_add(4));
+                }
+                loop {
+                    if DEBUG_INTERRUPTED.load(Ordering::Relaxed) {
+                        println!("\nInterrupted at {:#010x}", cpu.get_pc());
+                        if let Some((sym_name, offset)) =
+                            find_closest_symbol(cpu.get_pc(), &symbol_list)
+                        {
+                            println!("At: <{}+{}>", sym_name, offset);
+                        }
+                        break;
+                    }
+                    match cpu.step(&mut bus) {
+                        Ok(_) => {
+                            cycles_executed += 1;
+                            let pc = cpu.get_pc();
+                            if breakpoints.contains(&pc) {
+                                println!("breakpoint {:#010x}", pc);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            if e == Error::Ebreak && cfg.stats {
+                                println!("Cycles executed before ebreak: {}", cycles_executed);
+                            }
+                            println!("Halted: {:?}", e);
+                            print_pc(&cpu);
+                            break;
+                        }
+                    }
+                }
+                DEBUG_RUNNING.store(false, Ordering::Relaxed);
+                DEBUG_INTERRUPTED.store(false, Ordering::Relaxed);
+            }
             _ => {}
         }
     }

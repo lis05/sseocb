@@ -49,5 +49,5 @@ SECTIONS
     } > RAM
 
     _i_stack_top = ORIGIN(STACK) + LENGTH(STACK);
-    _g_stack_top = _i_stack_top - 128;
+    _g_stack_top = _i_stack_top - 1024;
 }

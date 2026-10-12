@@ -37,6 +37,9 @@ __sseocb_i_entry:
         j 3b
     4:
 
+    # Initialize vPC
+    la x25, __sseocb_g_entry
+
     # Jump to main
     j __sseocb_i_main
 
@@ -141,13 +144,11 @@ __sseocb_i_plt_call:
 
 .globl __sseocb_i_native_call
 __sseocb_i_native_call:
-    # __sseocb_i_native_jump(addr) perform a jump to an external address.
+    # __sseocb_i_native_call(addr) executes a native call into guest code.
     #
     # addr is in x10+15=x25
     # Return address is in x1+15=x16
-
     la x1, 1f
     jr x25
-
     1:
     jr x16
