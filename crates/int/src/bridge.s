@@ -44,7 +44,7 @@ __sseocb_i_entry:
 __sseocb_i_read_guest_reg:
     # __sseocb_i_read_guest_reg(reg_index) reads a guest register and returns it.
     #
-    # read_index is in x10+15=x25
+    # reg_index is in x10+15=x25
     # Return register is x10+15=x25
     # Return address is in x1+15=x16
 
@@ -92,7 +92,7 @@ __sseocb_i_read_guest_reg:
 __sseocb_i_write_guest_reg:
     # __sseocb_i_write_guest_reg(reg_index, value) writes into a guest register.
     #
-    # read_index is in x10+15=x25
+    # reg_index is in x10+15=x25
     # value is in x11+15=x26
     # Return address is in x1+15=x16
 
@@ -139,3 +139,15 @@ __sseocb_i_write_guest_reg:
 .globl __sseocb_i_plt_call
 __sseocb_i_plt_call:
 
+.globl __sseocb_i_native_call
+__sseocb_i_native_call:
+    # __sseocb_i_native_jump(addr) perform a jump to an external address.
+    #
+    # addr is in x10+15=x25
+    # Return address is in x1+15=x16
+
+    la x1, 1f
+    jr x25
+
+    1:
+    jr x16

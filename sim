@@ -1,3 +1,1 @@
-#!/bin/bash
-
-cargo run -p sim "$@"
+../target/debug/sim

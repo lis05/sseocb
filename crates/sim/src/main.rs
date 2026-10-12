@@ -115,6 +115,7 @@ fn print_usage() {
     eprintln!(
         "  --max-cycles <CYCLES> Maximum cycle limit (default: 10M / 10000000, 0 for unlimited)"
     );
+    eprintln!("  --stats               Print execution stats (cycles executed before ebreak)");
     eprintln!();
     eprintln!(
         "Values support hex ('0x...'), decimal, and suffixes ('K', 'M', 'G', 'KiB', 'MiB', 'GiB')."
@@ -134,6 +135,7 @@ struct RunConfig {
     entry: Option<u32>,
     elf_path: Option<String>,
     program_path: Option<String>,
+    stats: bool,
 }
 
 impl Default for RunConfig {
@@ -150,6 +152,7 @@ impl Default for RunConfig {
             entry: None,
             elf_path: None,
             program_path: None,
+            stats: false,
         }
     }
 }
@@ -313,6 +316,16 @@ fn parse_run_args(args: &[String]) -> Result<RunConfig, String> {
         } else if let Some(val) = arg.strip_prefix("--elf=") {
             cfg.elf_path = Some(val.to_string());
             i += 1;
+        } else if arg == "--stats" {
+            cfg.stats = true;
+            i += 1;
+        } else if let Some(val) = arg.strip_prefix("--stats=") {
+            cfg.stats = match val.to_lowercase().as_str() {
+                "true" | "1" | "yes" => true,
+                "false" | "0" | "no" => false,
+                _ => return Err(format!("invalid boolean value for --stats: '{}'", val)),
+            };
+            i += 1;
         } else if arg == "-h" || arg == "--help" {
             print_usage();
             process::exit(0);
@@ -415,7 +428,21 @@ fn execute_run(cfg: &RunConfig) -> Result<(), String> {
             Ok(_) => {
                 cycles_executed += 1;
             }
-            Err(Error::Ebreak) | Err(Error::Ecall) => {
+            Err(Error::Ebreak) => {
+                let _ = std::io::stdout().flush();
+                if cfg.stats {
+                    println!("Cycles executed before ebreak: {}", cycles_executed);
+                }
+                let exit_code = cpu.read_reg(10);
+                if exit_code != 0 {
+                    return Err(format!(
+                        "guest program exited with non-zero code: {}",
+                        exit_code
+                    ));
+                }
+                return Ok(());
+            }
+            Err(Error::Ecall) => {
                 let _ = std::io::stdout().flush();
                 let exit_code = cpu.read_reg(10);
                 if exit_code != 0 {
@@ -917,6 +944,7 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
     let mut cpu = CPU::new();
     let mut breakpoints = HashSet::new();
     let mut last_cmd = String::new();
+    let mut cycles_executed = 0u64;
 
     let print_pc = |cpu: &CPU| {
         println!("PC: {:#010x}", cpu.get_pc());
@@ -1030,6 +1058,7 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                 println!(
                     "  c                          Continue execution until breakpoint or halt"
                 );
+                println!("  cycles                     Print total cycles executed so far");
                 println!(
                     "  sym, symbols [name]        List loaded ELF symbols, or look up specific symbol"
                 );
@@ -1372,8 +1401,12 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                     }
                 }
             }
+            "cycles" => {
+                println!("Cycles executed: {}", cycles_executed);
+            }
             "s" => match cpu.step(&mut bus) {
                 Ok(_) => {
+                    cycles_executed += 1;
                     let pc = cpu.get_pc();
                     if breakpoints.contains(&pc) {
                         println!("breakpoint {:#010x}", pc);
@@ -1382,6 +1415,9 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                     }
                 }
                 Err(e) => {
+                    if e == Error::Ebreak && cfg.stats {
+                        println!("Cycles executed before ebreak: {}", cycles_executed);
+                    }
                     println!("Halted: {:?}", e);
                     print_pc(&cpu);
                 }
@@ -1389,6 +1425,7 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
             "c" => loop {
                 match cpu.step(&mut bus) {
                     Ok(_) => {
+                        cycles_executed += 1;
                         let pc = cpu.get_pc();
                         if breakpoints.contains(&pc) {
                             println!("breakpoint {:#010x}", pc);
@@ -1396,6 +1433,9 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                         }
                     }
                     Err(e) => {
+                        if e == Error::Ebreak && cfg.stats {
+                            println!("Cycles executed before ebreak: {}", cycles_executed);
+                        }
                         println!("Halted: {:?}", e);
                         print_pc(&cpu);
                         break;
@@ -1623,5 +1663,25 @@ mod tests {
         };
         let ann_lui = annotate_auipc_addi(0x100400, prev_lui, 2, -1152, &symbol_list);
         assert_eq!(ann_lui, None);
+    }
+
+    #[test]
+    fn test_parse_run_args_stats() {
+        let args = vec!["--stats".to_string(), "prog.bin".to_string()];
+        let cfg = parse_run_args(&args).unwrap();
+        assert!(cfg.stats);
+        assert_eq!(cfg.program_path, Some("prog.bin".to_string()));
+
+        let args2 = vec!["prog.bin".to_string(), "--stats=true".to_string()];
+        let cfg2 = parse_run_args(&args2).unwrap();
+        assert!(cfg2.stats);
+
+        let args3 = vec!["prog.bin".to_string(), "--stats=false".to_string()];
+        let cfg3 = parse_run_args(&args3).unwrap();
+        assert!(!cfg3.stats);
+
+        let args4 = vec!["prog.bin".to_string()];
+        let cfg4 = parse_run_args(&args4).unwrap();
+        assert!(!cfg4.stats);
     }
 }

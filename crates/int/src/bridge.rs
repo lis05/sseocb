@@ -3,6 +3,7 @@
 unsafe extern "C" {
     fn __sseocb_i_read_guest_reg(reg: u32) -> u32;
     fn __sseocb_i_write_guest_reg(reg: u32, value: u32);
+    fn __sseocb_i_native_call(addr: u32);
 }
 
 pub fn read_guest_reg(reg: usize) -> u32 {
@@ -11,4 +12,8 @@ pub fn read_guest_reg(reg: usize) -> u32 {
 
 pub fn write_guest_reg(reg: usize, value: u32) {
     unsafe { __sseocb_i_write_guest_reg(reg as u32, value) }
+}
+
+pub fn native_call(addr: u32) {
+    unsafe { __sseocb_i_native_call(addr) };
 }

@@ -1,5 +1,11 @@
 SECTIONS
 {
+    .rodata : {
+        . = ALIGN(4);
+        *(.rodata .rodata.*)
+        . = ALIGN(4);
+    } > FLASH
+
     .text.__sseocb_g.plt : {
         . = ALIGN(4);
         *(.text.__sseocb_g.plt)
@@ -15,12 +21,6 @@ SECTIONS
     .text.__sseocb_i.bridge : {
         . = ALIGN(4);
         *(.text.__sseocb_i.bridge)
-        . = ALIGN(4);
-    } > FLASH
-
-    .rodata : {
-        . = ALIGN(4);
-        *(.rodata .rodata.*)
         . = ALIGN(4);
     } > FLASH
 

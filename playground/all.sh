@@ -135,5 +135,5 @@ llvm-size -A -d artifacts/final.o
 llvm-objcopy -O binary -R .__sseocb_g.vP artifacts/final.o artifacts/final.bin
 ENTRY_ADDR=$(llvm-readelf -h artifacts/final.o | grep "Entry point address:" | awk '{print $4}')
 echo "=== Running in sim (entry: $ENTRY_ADDR) ==="
-sim debug --elf artifacts/final.o --entry "$ENTRY_ADDR" artifacts/final.bin
+sim debug --stats --elf artifacts/final.o --entry "$ENTRY_ADDR" artifacts/final.bin
 echo "=== Simulation passed successfully! ==="
