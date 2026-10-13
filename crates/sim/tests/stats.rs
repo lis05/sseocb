@@ -4,9 +4,10 @@ use std::process::Command;
 fn test_sim_run_stats() {
     let sim_bin = env!("CARGO_BIN_EXE_sim");
     let prime_bin = concat!(env!("CARGO_MANIFEST_DIR"), "/test_run/primes.bin");
+    let memory_ld = concat!(env!("CARGO_MANIFEST_DIR"), "/setup/memory.ld");
 
     let output = Command::new(sim_bin)
-        .args(["run", "--stats", prime_bin])
+        .args(["run", "--memory-ld", memory_ld, "--stats", prime_bin])
         .output()
         .expect("failed to execute sim run");
 
@@ -26,9 +27,10 @@ fn test_sim_debug_stats() {
 
     let sim_bin = env!("CARGO_BIN_EXE_sim");
     let prime_bin = concat!(env!("CARGO_MANIFEST_DIR"), "/test_run/primes.bin");
+    let memory_ld = concat!(env!("CARGO_MANIFEST_DIR"), "/setup/memory.ld");
 
     let mut child = Command::new(sim_bin)
-        .args(["debug", "--stats", prime_bin])
+        .args(["debug", "--memory-ld", memory_ld, "--stats", prime_bin])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

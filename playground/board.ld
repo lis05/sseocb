@@ -14,13 +14,19 @@ SECTIONS
 
     .text.__sseocb_i.rust : {
         . = ALIGN(4);
-        *int.o(.text .text.*)
+        *(.text.__sseocb_i.rust)
         . = ALIGN(4);
     } > FLASH
 
     .text.__sseocb_i.bridge : {
         . = ALIGN(4);
         *(.text.__sseocb_i.bridge)
+        . = ALIGN(4);
+    } > FLASH
+
+    .__sseocb_i.rodata : {
+        . = ALIGN(4);
+        *(.__sseocb_i.rodata .__sseocb_i.rodata.*)
         . = ALIGN(4);
     } > FLASH
 

@@ -63,8 +63,8 @@ fi
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
-# Generate memory.ld from the simulator's memory topology
-"$SIM_BIN" export-script > "$TEMP_DIR/memory.ld"
+# Use memory.ld from setup
+cp "$SETUP_DIR/memory.ld" "$TEMP_DIR/memory.ld"
 
 mkdir -p "$(dirname "$OUT_BIN")"
 

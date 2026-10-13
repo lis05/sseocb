@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use object::{Object, ObjectSymbol, SymbolKind};
 use sim::cpu::{CPU, Error};
 use sim::instruction::Instruction;
-use sim::memory::{Permissions, bus::Bus, region::Region};
+use sim::memory::{Permissions, bus::Bus};
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();
@@ -99,19 +99,13 @@ fn main() {
 fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  sim accept <file>");
-    eprintln!("  sim export-script [OPTIONS]");
-    eprintln!("  sim run [OPTIONS] <file>");
-    eprintln!("  sim debug [OPTIONS] <file>");
+    eprintln!("  sim export-script --memory-ld <file>");
+    eprintln!("  sim run --memory-ld <file> [OPTIONS] <file>");
+    eprintln!("  sim debug --memory-ld <file> [OPTIONS] <file>");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --flash-base <ADDR>   Flash base address (default: 1M / 0x00100000)");
-    eprintln!("  --flash-len <SIZE>    Flash length (default: 32K / 0x00008000)");
-    eprintln!("  --sram-base <ADDR>    SRAM base address (default: 2M / 0x00200000)");
-    eprintln!("  --sram-len <SIZE>     SRAM length (default: 32K / 0x00008000)");
-    eprintln!("  --stack-base <ADDR>   Stack base address (default: 3M / 0x00300000)");
-    eprintln!("  --stack-len <SIZE>    Stack length (default: 4K / 0x00001000)");
-    eprintln!("  --uart-base <ADDR>    UART MMIO address (default: 1G / 0x40000000)");
-    eprintln!("  --entry <ADDR>        Entry address (default: flash-base)");
+    eprintln!("  --memory-ld <PATH>    Linker script defining MEMORY block (required)");
+    eprintln!("  --entry <ADDR>        Entry address (default: FLASH origin from memory.ld)");
     eprintln!("  --elf <PATH>          ELF file containing symbols for debugging");
     eprintln!(
         "  --max-cycles <CYCLES> Maximum cycle limit (default: 10M / 10000000, 0 for unlimited)"
@@ -125,13 +119,7 @@ fn print_usage() {
 
 #[derive(Debug, PartialEq, Eq)]
 struct RunConfig {
-    flash_base: u32,
-    flash_len: u32,
-    sram_base: u32,
-    sram_len: u32,
-    stack_base: u32,
-    stack_len: u32,
-    uart_base: u32,
+    memory_ld: Option<String>,
     max_cycles: u64,
     entry: Option<u32>,
     elf_path: Option<String>,
@@ -142,14 +130,8 @@ struct RunConfig {
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
-            flash_base: 0x0010_0000, // 1M
-            flash_len: 0x8000,       // 32K
-            sram_base: 0x0020_0000,  // 2M
-            sram_len: 0x8000,        // 32K
-            stack_base: 0x0030_0000, // 3M
-            stack_len: 0x1000,       // 4K
-            uart_base: 0x4000_0000,  // 1G
-            max_cycles: 10_000_000,  // 10M
+            memory_ld: None,
+            max_cycles: 10_000_000,
             entry: None,
             elf_path: None,
             program_path: None,
@@ -214,75 +196,18 @@ fn parse_run_args(args: &[String]) -> Result<RunConfig, String> {
 
     while i < args.len() {
         let arg = &args[i];
-        if arg == "--flash-base" {
+        if arg == "--memory-ld" || arg == "--memory" {
             i += 1;
             if i >= args.len() {
-                return Err("missing value for --flash-base".to_string());
+                return Err("missing value for --memory-ld".to_string());
             }
-            cfg.flash_base = parse_size_or_addr(&args[i])?;
+            cfg.memory_ld = Some(args[i].clone());
             i += 1;
-        } else if let Some(val) = arg.strip_prefix("--flash-base=") {
-            cfg.flash_base = parse_size_or_addr(val)?;
-            i += 1;
-        } else if arg == "--flash-len" {
-            i += 1;
-            if i >= args.len() {
-                return Err("missing value for --flash-len".to_string());
-            }
-            cfg.flash_len = parse_size_or_addr(&args[i])?;
-            i += 1;
-        } else if let Some(val) = arg.strip_prefix("--flash-len=") {
-            cfg.flash_len = parse_size_or_addr(val)?;
-            i += 1;
-        } else if arg == "--sram-base" {
-            i += 1;
-            if i >= args.len() {
-                return Err("missing value for --sram-base".to_string());
-            }
-            cfg.sram_base = parse_size_or_addr(&args[i])?;
-            i += 1;
-        } else if let Some(val) = arg.strip_prefix("--sram-base=") {
-            cfg.sram_base = parse_size_or_addr(val)?;
-            i += 1;
-        } else if arg == "--sram-len" {
-            i += 1;
-            if i >= args.len() {
-                return Err("missing value for --sram-len".to_string());
-            }
-            cfg.sram_len = parse_size_or_addr(&args[i])?;
-            i += 1;
-        } else if let Some(val) = arg.strip_prefix("--sram-len=") {
-            cfg.sram_len = parse_size_or_addr(val)?;
-            i += 1;
-        } else if arg == "--stack-base" {
-            i += 1;
-            if i >= args.len() {
-                return Err("missing value for --stack-base".to_string());
-            }
-            cfg.stack_base = parse_size_or_addr(&args[i])?;
-            i += 1;
-        } else if let Some(val) = arg.strip_prefix("--stack-base=") {
-            cfg.stack_base = parse_size_or_addr(val)?;
-            i += 1;
-        } else if arg == "--stack-len" {
-            i += 1;
-            if i >= args.len() {
-                return Err("missing value for --stack-len".to_string());
-            }
-            cfg.stack_len = parse_size_or_addr(&args[i])?;
-            i += 1;
-        } else if let Some(val) = arg.strip_prefix("--stack-len=") {
-            cfg.stack_len = parse_size_or_addr(val)?;
-            i += 1;
-        } else if arg == "--uart-base" {
-            i += 1;
-            if i >= args.len() {
-                return Err("missing value for --uart-base".to_string());
-            }
-            cfg.uart_base = parse_size_or_addr(&args[i])?;
-            i += 1;
-        } else if let Some(val) = arg.strip_prefix("--uart-base=") {
-            cfg.uart_base = parse_size_or_addr(val)?;
+        } else if let Some(val) = arg
+            .strip_prefix("--memory-ld=")
+            .or_else(|| arg.strip_prefix("--memory="))
+        {
+            cfg.memory_ld = Some(val.to_string());
             i += 1;
         } else if arg == "--max-cycles" {
             i += 1;
@@ -343,57 +268,44 @@ fn parse_run_args(args: &[String]) -> Result<RunConfig, String> {
     Ok(cfg)
 }
 
-fn create_bus(cfg: &RunConfig, program_bytes: Option<&[u8]>) -> Result<Bus, String> {
-    let mut bus = Bus::new();
+fn create_bus(cfg: &RunConfig, program_bytes: Option<&[u8]>) -> Result<(Bus, u32), String> {
+    let memory_ld_path = cfg
+        .memory_ld
+        .as_deref()
+        .ok_or_else(|| "missing required option --memory-ld <path>".to_string())?;
 
-    // FLASH
-    let mut flash_data = vec![0u8; cfg.flash_len as usize];
-    if let Some(bytes) = program_bytes {
-        if bytes.len() > flash_data.len() {
-            return Err(format!(
-                "program size ({} bytes) exceeds flash length ({} bytes)",
-                bytes.len(),
-                flash_data.len()
-            ));
-        }
-        flash_data[..bytes.len()].copy_from_slice(bytes);
+    let content = fs::read_to_string(memory_ld_path)
+        .map_err(|e| format!("failed to read memory script '{}': {}", memory_ld_path, e))?;
+
+    let defs = sim::memory::bus::parse_memory_section(&content)?;
+
+    let flash_origin = defs
+        .iter()
+        .find(|d| d.name.eq_ignore_ascii_case("FLASH"))
+        .map(|d| d.origin)
+        .ok_or_else(|| "missing required memory region 'FLASH' in memory.ld".to_string())?;
+
+    if !defs
+        .iter()
+        .any(|d| d.name.eq_ignore_ascii_case("RAM") || d.name.eq_ignore_ascii_case("SRAM"))
+    {
+        return Err("missing required memory region 'RAM' (or 'SRAM') in memory.ld".to_string());
     }
-    let flash = Region::try_new("FLASH", cfg.flash_base, Permissions::RX, flash_data)
-        .map_err(|e| format!("failed to create FLASH region: {:?}", e))?;
-    bus.add(flash)
-        .map_err(|e| format!("failed to add FLASH to bus: {:?}", e))?;
 
-    // RAM (SRAM)
-    let sram_data = vec![0u8; cfg.sram_len as usize];
-    let sram = Region::try_new("RAM", cfg.sram_base, Permissions::RWX, sram_data)
-        .map_err(|e| format!("failed to create RAM region: {:?}", e))?;
-    bus.add(sram)
-        .map_err(|e| format!("failed to add RAM to bus: {:?}", e))?;
+    if !defs.iter().any(|d| d.name.eq_ignore_ascii_case("STACK")) {
+        return Err("missing required memory region 'STACK' in memory.ld".to_string());
+    }
 
-    // STACK
-    let stack_data = vec![0u8; cfg.stack_len as usize];
-    let stack = Region::try_new("STACK", cfg.stack_base, Permissions::RW, stack_data)
-        .map_err(|e| format!("failed to create STACK region: {:?}", e))?;
-    bus.add(stack)
-        .map_err(|e| format!("failed to add STACK to bus: {:?}", e))?;
+    if !defs.iter().any(|d| d.name.eq_ignore_ascii_case("UART")) {
+        return Err("missing required memory region 'UART' in memory.ld".to_string());
+    }
 
-    // UART (4 bytes aperture for 8-bit, 16-bit, and 32-bit MMIO stores)
-    let uart = Region::try_new("UART", cfg.uart_base, Permissions::RW, vec![0u8; 4])
-        .map_err(|e| format!("failed to create UART region: {:?}", e))?
-        .with_write_proxy(|_addr, buf| {
-            let mut out = std::io::stdout();
-            out.write_all(buf)
-                .and_then(|_| out.flush())
-                .map_err(|_| sim::memory::region::Error::AddressViolation)
-        });
-    bus.add(uart)
-        .map_err(|e| format!("failed to add UART to bus: {:?}", e))?;
-
-    Ok(bus)
+    let bus = Bus::from_memory_defs(&defs, program_bytes)?;
+    Ok((bus, flash_origin))
 }
 
 fn execute_export_script(cfg: &RunConfig) -> Result<(), String> {
-    let bus = create_bus(cfg, None)?;
+    let (bus, _) = create_bus(cfg, None)?;
     print!("{}", bus.to_linker_script());
     Ok(())
 }
@@ -410,9 +322,9 @@ fn execute_run(cfg: &RunConfig) -> Result<(), String> {
         return Err("program file is empty".to_string());
     }
 
-    let mut bus = create_bus(cfg, Some(&bytes))?;
+    let (mut bus, flash_origin) = create_bus(cfg, Some(&bytes))?;
     let mut cpu = CPU::new();
-    let entry_pc = cfg.entry.unwrap_or(cfg.flash_base);
+    let entry_pc = cfg.entry.unwrap_or(flash_origin);
     cpu.set_pc(entry_pc);
 
     let mut cycles_executed = 0u64;
@@ -965,7 +877,7 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
         return Err("program file is empty".to_string());
     }
 
-    let mut bus = create_bus(cfg, Some(&bytes))?;
+    let (mut bus, flash_origin) = create_bus(cfg, Some(&bytes))?;
     let mut cpu = CPU::new();
     let mut breakpoints = HashSet::new();
     let mut last_cmd = String::new();
@@ -1023,8 +935,11 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
     let entry_pc = cfg.entry.unwrap_or_else(|| {
         symbols
             .get("__sseocb_i_entry")
+            .or_else(|| symbols.get("__sseocb_native_entry"))
+            .or_else(|| symbols.get("_start"))
+            .or_else(|| symbols.get("main"))
             .copied()
-            .unwrap_or(cfg.flash_base)
+            .unwrap_or(flash_origin)
     });
     cpu.set_pc(entry_pc);
 
@@ -1723,9 +1638,15 @@ mod tests {
 
     #[test]
     fn test_parse_run_args_stats() {
-        let args = vec!["--stats".to_string(), "prog.bin".to_string()];
+        let args = vec![
+            "--memory-ld".to_string(),
+            "mem.ld".to_string(),
+            "--stats".to_string(),
+            "prog.bin".to_string(),
+        ];
         let cfg = parse_run_args(&args).unwrap();
         assert!(cfg.stats);
+        assert_eq!(cfg.memory_ld, Some("mem.ld".to_string()));
         assert_eq!(cfg.program_path, Some("prog.bin".to_string()));
 
         let args2 = vec!["prog.bin".to_string(), "--stats=true".to_string()];

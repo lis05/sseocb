@@ -21,3 +21,6 @@ cargo test --workspace --exclude int
 echo "--> Running bare-metal C E2E tests..."
 bash scripts/run_tests.sh
 
+echo "--> Running orchestrator E2E tests..."
+bash e2e/test.sh
+

@@ -14,8 +14,8 @@ ARTIFACTS_DIR="$TEST_DIR/artifacts"
 rm -rf "$ARTIFACTS_DIR"
 mkdir -p "$ARTIFACTS_DIR"
 
-# Export memory topology script to artifacts/memory.ld for inspection
-"$SIM_BIN" export-script > "$ARTIFACTS_DIR/memory.ld"
+# Copy memory.ld from sim setup
+cp "$REPO_ROOT/crates/sim/setup/memory.ld" "$ARTIFACTS_DIR/memory.ld"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -43,7 +43,7 @@ for test_c in "$TEST_DIR"/*.c; do
     fi
 
     # 2. Run flat binary through `sim run <file.bin>`
-    if ! "$SIM_BIN" run "$bin_file" > "$actual_out" 2> "$err_file"; then
+    if ! "$SIM_BIN" run --memory-ld "$ARTIFACTS_DIR/memory.ld" "$bin_file" > "$actual_out" 2> "$err_file"; then
         echo "FAIL: $test_name (simulation failed)" >&2
         cat "$err_file" >&2
         FAIL_COUNT=$((FAIL_COUNT + 1))

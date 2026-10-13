@@ -324,6 +324,64 @@ pub mod bus {
             self.write(address, &val.to_le_bytes())
         }
 
+        pub fn from_memory_defs(
+            defs: &[MemoryRegionDef],
+            program_bytes: Option<&[u8]>,
+        ) -> std::result::Result<Self, String> {
+            let mut bus = Bus::new();
+            let mut flash_loaded = false;
+
+            for def in defs {
+                let is_uart = def.name.eq_ignore_ascii_case("UART");
+                let is_flash = def.name.eq_ignore_ascii_case("FLASH");
+
+                let data = if is_flash {
+                    let mut data = vec![0u8; def.length as usize];
+                    if let Some(bytes) = program_bytes {
+                        if bytes.len() > data.len() {
+                            return Err(format!(
+                                "program size ({} bytes) exceeds FLASH region length ({} bytes)",
+                                bytes.len(),
+                                data.len()
+                            ));
+                        }
+                        data[..bytes.len()].copy_from_slice(bytes);
+                        flash_loaded = true;
+                    }
+                    data
+                } else {
+                    vec![0u8; def.length as usize]
+                };
+
+                let mut region = Region::try_new(&def.name, def.origin, def.permissions, data)
+                    .map_err(|e| format!("failed to create region '{}': {:?}", def.name, e))?;
+
+                if is_uart {
+                    region = region.with_write_proxy(|_addr, buf| {
+                        use std::io::Write;
+                        let mut out = std::io::stdout();
+                        out.write_all(buf)
+                            .and_then(|_| out.flush())
+                            .map_err(|_| super::region::Error::AddressViolation)
+                    });
+                }
+
+                bus.add(region)
+                    .map_err(|e| format!("failed to add region '{}' to bus: {:?}", def.name, e))?;
+            }
+
+            if let Some(bytes) = program_bytes
+                && !bytes.is_empty()
+                && !flash_loaded
+            {
+                return Err(
+                    "cannot load program bytes: no FLASH region defined in memory.ld".to_string(),
+                );
+            }
+
+            Ok(bus)
+        }
+
         pub fn to_linker_script(&self) -> String {
             let mut script = String::from("MEMORY\n{\n");
             for region in &self.regions {
@@ -333,6 +391,233 @@ pub mod bus {
             script.push_str("}\n");
             script
         }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct MemoryRegionDef {
+        pub name: String,
+        pub permissions: Permissions,
+        pub origin: u32,
+        pub length: u32,
+    }
+
+    pub fn parse_u64_with_suffix(s: &str) -> std::result::Result<u64, String> {
+        let s = s.trim().replace('_', "");
+        if s.is_empty() {
+            return Err("empty value".to_string());
+        }
+
+        let (num_str, multiplier) = if let Some(stripped) = s
+            .strip_suffix("GiB")
+            .or_else(|| s.strip_suffix('G'))
+            .or_else(|| s.strip_suffix('g'))
+        {
+            (stripped, 1024 * 1024 * 1024u64)
+        } else if let Some(stripped) = s
+            .strip_suffix("MiB")
+            .or_else(|| s.strip_suffix('M'))
+            .or_else(|| s.strip_suffix('m'))
+        {
+            (stripped, 1024 * 1024u64)
+        } else if let Some(stripped) = s
+            .strip_suffix("KiB")
+            .or_else(|| s.strip_suffix('K'))
+            .or_else(|| s.strip_suffix('k'))
+        {
+            (stripped, 1024u64)
+        } else {
+            (s.as_str(), 1u64)
+        };
+
+        let base_val = if let Some(hex) = num_str
+            .strip_prefix("0x")
+            .or_else(|| num_str.strip_prefix("0X"))
+        {
+            u64::from_str_radix(hex, 16).map_err(|e| format!("invalid hex '{}': {}", num_str, e))?
+        } else {
+            num_str
+                .parse::<u64>()
+                .map_err(|e| format!("invalid number '{}': {}", num_str, e))?
+        };
+
+        base_val
+            .checked_mul(multiplier)
+            .ok_or_else(|| format!("value '{}' overflows integer size", s))
+    }
+
+    pub fn parse_size_or_addr(s: &str) -> std::result::Result<u32, String> {
+        let val = parse_u64_with_suffix(s)?;
+        u32::try_from(val).map_err(|_| format!("value '{}' exceeds 32-bit address space", s))
+    }
+
+    fn strip_comments(input: &str) -> String {
+        let mut out = String::with_capacity(input.len());
+        let mut chars = input.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '/' {
+                if let Some(&'/') = chars.peek() {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if next == '\n' {
+                            out.push('\n');
+                            break;
+                        }
+                    }
+                    continue;
+                } else if let Some(&'*') = chars.peek() {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '*' && chars.peek() == Some(&'/') {
+                            chars.next();
+                            out.push(' ');
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            } else if c == '#' {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    pub fn parse_memory_section(
+        content: &str,
+    ) -> std::result::Result<Vec<MemoryRegionDef>, String> {
+        let clean = strip_comments(content);
+        let upper = clean.to_ascii_uppercase();
+        let mem_idx = upper
+            .find("MEMORY")
+            .ok_or_else(|| "missing MEMORY block in linker script".to_string())?;
+
+        let open_brace = clean[mem_idx..]
+            .find('{')
+            .ok_or_else(|| "malformed MEMORY block: missing '{'".to_string())?
+            + mem_idx;
+        let close_brace = clean[open_brace..]
+            .find('}')
+            .ok_or_else(|| "malformed MEMORY block: missing '}'".to_string())?
+            + open_brace;
+
+        let block = &clean[open_brace + 1..close_brace];
+
+        let mut tokens = Vec::new();
+        let mut cur = String::new();
+        for c in block.chars() {
+            if c.is_whitespace() {
+                if !cur.is_empty() {
+                    tokens.push(std::mem::take(&mut cur));
+                }
+            } else if matches!(c, '(' | ')' | ':' | '=' | ',' | ';') {
+                if !cur.is_empty() {
+                    tokens.push(std::mem::take(&mut cur));
+                }
+                tokens.push(c.to_string());
+            } else {
+                cur.push(c);
+            }
+        }
+        if !cur.is_empty() {
+            tokens.push(cur);
+        }
+
+        let mut defs = Vec::new();
+        let mut i = 0;
+
+        while i < tokens.len() {
+            if tokens[i] == ";" {
+                i += 1;
+                continue;
+            }
+
+            let name = tokens[i].clone();
+            i += 1;
+
+            if matches!(name.as_str(), "(" | ")" | ":" | "=" | ",") {
+                return Err(format!("unexpected token '{}' in MEMORY block", name));
+            }
+
+            let mut permissions = Permissions::RWX;
+            if i < tokens.len() && tokens[i] == "(" {
+                i += 1;
+                let mut attr_str = String::new();
+                while i < tokens.len() && tokens[i] != ")" {
+                    attr_str.push_str(&tokens[i]);
+                    i += 1;
+                }
+                if i >= tokens.len() || tokens[i] != ")" {
+                    return Err(format!("unclosed attributes for region '{}'", name));
+                }
+                i += 1;
+                attr_str = attr_str.to_ascii_lowercase();
+                permissions = Permissions {
+                    read: attr_str.contains('r'),
+                    write: attr_str.contains('w'),
+                    execute: attr_str.contains('x'),
+                };
+            }
+
+            if i >= tokens.len() || tokens[i] != ":" {
+                return Err(format!("expected ':' after region name '{}'", name));
+            }
+            i += 1;
+
+            let mut origin: Option<u32> = None;
+            let mut length: Option<u32> = None;
+
+            while i + 1 < tokens.len() && tokens[i + 1] == "=" {
+                let key = tokens[i].to_ascii_lowercase();
+                if i + 2 >= tokens.len() {
+                    return Err(format!(
+                        "missing value for key '{}' in region '{}'",
+                        key, name
+                    ));
+                }
+                let val = &tokens[i + 2];
+                i += 3;
+
+                if key == "org" || key == "origin" || key == "o" {
+                    origin = Some(parse_size_or_addr(val)?);
+                } else if key == "len" || key == "length" || key == "l" {
+                    length = Some(parse_size_or_addr(val)?);
+                }
+
+                if i < tokens.len() && (tokens[i] == "," || tokens[i] == ";") {
+                    i += 1;
+                }
+            }
+
+            let origin = origin.ok_or_else(|| format!("missing origin in region '{}'", name))?;
+            let length = length.ok_or_else(|| format!("missing length in region '{}'", name))?;
+
+            if length == 0 {
+                return Err(format!("region '{}' has zero length", name));
+            }
+            if origin.checked_add(length).is_none() {
+                return Err(format!("region '{}' overflows 32-bit address space", name));
+            }
+
+            defs.push(MemoryRegionDef {
+                name,
+                permissions,
+                origin,
+                length,
+            });
+        }
+
+        if defs.is_empty() {
+            return Err("MEMORY block contains no region definitions".to_string());
+        }
+
+        Ok(defs)
     }
 }
 
@@ -586,6 +871,7 @@ mod tests {
     }
 
     mod bus_tests {
+        use super::bus::parse_memory_section;
         use super::*;
 
         #[test]
@@ -848,6 +1134,90 @@ mod tests {
 
             let expected = "MEMORY\n{\n    FLASH    (rx)  : org = 0x00010000, len = 0x10000\n    RAM      (rw)  : org = 0x20000000, len = 0x4000\n    UART     (rw)  : org = 0x40000000, len = 0x1000\n}\n";
             assert_eq!(bus.to_linker_script(), expected);
+        }
+
+        #[test]
+        fn test_parse_memory_section_standard() {
+            let script = r#"
+                /* standard memory script */
+                MEMORY
+                {
+                    FLASH    (rx)  : org = 0x00100000, len = 0x8000
+                    RAM      (rwx) : org = 0x00200000, len = 16K
+                    STACK    (rw)  : ORIGIN = 0x00300000, LENGTH = 8KiB
+                    UART     (rw)  : o = 0x40000000, l = 4
+                }
+            "#;
+
+            let defs = parse_memory_section(script).unwrap();
+            assert_eq!(defs.len(), 4);
+
+            assert_eq!(defs[0].name, "FLASH");
+            assert_eq!(defs[0].permissions, Permissions::RX);
+            assert_eq!(defs[0].origin, 0x0010_0000);
+            assert_eq!(defs[0].length, 0x8000);
+
+            assert_eq!(defs[1].name, "RAM");
+            assert_eq!(defs[1].permissions, Permissions::RWX);
+            assert_eq!(defs[1].origin, 0x0020_0000);
+            assert_eq!(defs[1].length, 16 * 1024);
+
+            assert_eq!(defs[2].name, "STACK");
+            assert_eq!(defs[2].permissions, Permissions::RW);
+            assert_eq!(defs[2].origin, 0x0030_0000);
+            assert_eq!(defs[2].length, 8 * 1024);
+
+            assert_eq!(defs[3].name, "UART");
+            assert_eq!(defs[3].permissions, Permissions::RW);
+            assert_eq!(defs[3].origin, 0x4000_0000);
+            assert_eq!(defs[3].length, 4);
+
+            let prog = [0x93, 0x00, 0x00, 0x00]; // nop
+            let bus = Bus::from_memory_defs(&defs, Some(&prog)).unwrap();
+            assert_eq!(bus.read_u32(0x0010_0000, Permissions::RX), Ok(0x0000_0093));
+        }
+
+        #[test]
+        fn test_parse_memory_section_multiline_and_comments() {
+            let script = r#"
+                # line comment
+                /* block comment
+                   with multiple lines */
+                MEMORY
+                {
+                    FLASH (rx) :
+                        ORIGIN = 0x0010_0000,
+                        LENGTH = 16M;
+                    RAM (rwx) :
+                        ORIGIN = 0x0020_0000,
+                        LENGTH = 8M;
+                    STACK : org = 0x00300000 len = 4K;
+                }
+            "#;
+
+            let defs = parse_memory_section(script).unwrap();
+            assert_eq!(defs.len(), 3);
+            assert_eq!(defs[0].name, "FLASH");
+            assert_eq!(defs[0].permissions, Permissions::RX);
+            assert_eq!(defs[0].origin, 0x0010_0000);
+            assert_eq!(defs[0].length, 16 * 1024 * 1024);
+
+            assert_eq!(defs[1].name, "RAM");
+            assert_eq!(defs[1].permissions, Permissions::RWX);
+            assert_eq!(defs[1].origin, 0x0020_0000);
+            assert_eq!(defs[1].length, 8 * 1024 * 1024);
+
+            assert_eq!(defs[2].name, "STACK");
+            assert_eq!(defs[2].permissions, Permissions::RWX);
+            assert_eq!(defs[2].origin, 0x0030_0000);
+            assert_eq!(defs[2].length, 4 * 1024);
+        }
+
+        #[test]
+        fn test_parse_memory_section_errors() {
+            assert!(parse_memory_section("SECTIONS {}").is_err());
+            assert!(parse_memory_section("MEMORY { FLASH : org = 0x1000 }").is_err());
+            assert!(parse_memory_section("MEMORY { FLASH : org = 0x1000, len = 0 }").is_err());
         }
     }
 }

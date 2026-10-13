@@ -452,7 +452,7 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
     entries.sort_by_key(|(_, slot)| *slot);
 
     let mut s_content = String::from(
-        ".section .rodata\n\
+        ".section .__sseocb_i.rodata, \"a\", @progbits\n\
         .global __sseocb_i.plt_vP\n\
         __sseocb_i.plt_vP:\n",
     );
@@ -492,20 +492,24 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
     let vp_data = vp_section.data()?;
     let vp_raw_path = out_dir.join("vP_raw.bin");
     fs::write(&vp_raw_path, vp_data)?;
+    let vp_raw_abs = fs::canonicalize(&vp_raw_path).unwrap_or_else(|_| vp_raw_path.clone());
     println!(
         "Extracted '.__sseocb_g.vP' ({} bytes) -> '{}'",
         vp_data.len(),
-        vp_raw_path.display()
+        vp_raw_abs.display()
     );
 
     let vp_path = out_dir.join("vP.s");
-    let vp = ".section .__sseocb_i.vP, \"a\", @progbits\n\
+    let vp = format!(
+        ".section .__sseocb_i.vP, \"a\", @progbits\n\
         .globl __sseocb_i_vpbase\n\
         .globl __sseocb_i_vpend\n\
         .p2align 2\n\
         __sseocb_i_vpbase:\n    \
-            .incbin \"artifacts/vP_raw.bin\"\n\
-        __sseocb_i_vpend:\n";
+            .incbin \"{}\"\n\
+        __sseocb_i_vpend:\n",
+        vp_raw_abs.display()
+    );
     fs::write(&vp_path, vp)?;
     println!("Generated '{}'", vp_path.display());
     Ok(())
