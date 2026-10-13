@@ -68,6 +68,21 @@ def add_common_build_args(parser: argparse.ArgumentParser) -> None:
         help="Extra flags passed when linking native guest code",
     )
     parser.add_argument(
+        "--include-dirs",
+        "-I",
+        nargs="*",
+        dest="include_dirs",
+        default=[],
+        type=Path,
+        help="Include directories for compiling C sources",
+    )
+    parser.add_argument(
+        "--c-flags",
+        nargs="*",
+        default=[],
+        help="Extra compiler flags passed to clang when compiling C sources",
+    )
+    parser.add_argument(
         "--entry",
         default="_start",
         help="Entry point symbol (default: _start)",
@@ -153,6 +168,8 @@ def build_config(args: argparse.Namespace, subcommand: str, target: str) -> Conf
         guest_native_obj=args.guest_native_obj,
         guest_native_ld=args.guest_native_ld,
         guest_native_linker_flags=args.guest_native_linker_flags,
+        include_dirs=getattr(args, "include_dirs", []),
+        c_flags=getattr(args, "c_flags", []),
         entry=args.entry,
         vpbase=parse_addr(args.vpbase),
         vpsize=parse_addr(args.vpsize),

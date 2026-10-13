@@ -36,6 +36,7 @@ for test_dir in "$TESTS_DIR"/*; do
             -mno-relax \
             -ffreestanding \
             -nostdlib \
+            -fno-optimize-sibling-calls \
             -O2 \
             -I "$COMMON_DIR" \
             -I "$test_dir" \

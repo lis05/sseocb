@@ -44,7 +44,7 @@ class Toolchain:
             raise ToolchainError(f"Failed to find or build '{crate_name}' at {bin_path}")
         return bin_path
 
-    def ensure_int_lib(self) -> Path:
+    def ensure_int_lib(self, decompressor: str = "noop") -> Path:
         int_a = (
             self.repo_root
             / "target"
@@ -52,7 +52,19 @@ class Toolchain:
             / "release"
             / "libint.a"
         )
-        if not int_a.exists():
+        stamp_file = int_a.parent / ".decompressor"
+        dec_norm = decompressor.lower()
+        needs_build = not int_a.exists() or (
+            not stamp_file.exists() or stamp_file.read_text().strip() != dec_norm
+        )
+        if needs_build:
+            if dec_norm == "noop":
+                feature_args = ["--no-default-features", "--features", "noop-dec"]
+            elif dec_norm == "blaris":
+                feature_args = ["--no-default-features", "--features", "blaris-dec"]
+            else:
+                feature_args = ["--no-default-features", "--features", f"{dec_norm}-dec"]
+
             self.run([
                 self.cargo,
                 "+nightly",
@@ -64,7 +76,11 @@ class Toolchain:
                 "riscv32e-unknown-none-elf",
                 "-Z",
                 "build-std=core,compiler_builtins",
+                *feature_args,
             ], cwd=self.repo_root)
+            int_a.parent.mkdir(parents=True, exist_ok=True)
+            stamp_file.write_text(dec_norm)
+
         if not int_a.exists():
             raise ToolchainError(f"Failed to find or build 'libint.a' at {int_a}")
         return int_a

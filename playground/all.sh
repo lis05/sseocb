@@ -68,6 +68,7 @@ fi
     -mno-relax \
     -ffreestanding \
     -nostdlib \
+    -fno-optimize-sibling-calls \
     -O2 \
     -I "$SCRIPT_DIR" \
     -c main.c \
@@ -75,7 +76,7 @@ fi
 
 # 2. Compile native.c as rv32e (native code)
 if [[ $LOG -eq 1 ]]; then
-    echo "+ $CLANG --target=riscv32 -march=rv32e -mabi=ilp32e -mno-relax -ffreestanding -nostdlib -O2 -I $SCRIPT_DIR -c native.c -o artifacts/guest-native.o"
+    echo "+ $CLANG --target=riscv32 -march=rv32e -mabi=ilp32e -mno-relax -ffreestanding -nostdlib -fno-optimize-sibling-calls -O2 -I $SCRIPT_DIR -c native.c -o artifacts/guest-native.o"
 fi
 "$CLANG" \
     --target=riscv32 \
@@ -84,6 +85,7 @@ fi
     -mno-relax \
     -ffreestanding \
     -nostdlib \
+    -fno-optimize-sibling-calls \
     -O2 \
     -I "$SCRIPT_DIR" \
     -c native.c \

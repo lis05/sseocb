@@ -19,6 +19,9 @@ class Config:
     guest_native_ld: Optional[Path] = None
     guest_native_linker_flags: List[str] = field(default_factory=list)
 
+    include_dirs: List[Path] = field(default_factory=list)
+    c_flags: List[str] = field(default_factory=list)
+
     entry: str = "_start"
     vpbase: int = 0xFFF00000
     vpsize: int = 0x00100000

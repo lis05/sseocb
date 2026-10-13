@@ -1,20 +1,102 @@
+import os
 from pathlib import Path
 import re
-from typing import Tuple
+import shutil
+from typing import Callable, Dict, Tuple
 from orchestrator.config import Config
-from orchestrator.pipeline_native import get_region_aliases
+from orchestrator.pipeline_native import compile_rv32e_if_source, get_region_aliases
 from orchestrator.toolchain import Toolchain, ToolchainError
+
+CompressorFn = Callable[[Path, Path, Toolchain, Config], Path]
+
+
+def compress_noop(raw_bin: Path, out_dir: Path, toolchain: Toolchain, config: Config) -> Path:
+    """No-op compression hook: leaves payload uncompressed."""
+    compressed_bin = out_dir / "vP_compressed.bin"
+    shutil.copyfile(raw_bin, compressed_bin)
+    return compressed_bin
+
+
+def compress_blaris(raw_bin: Path, out_dir: Path, toolchain: Toolchain, config: Config) -> Path:
+    """Blaris compression hook."""
+    compressed_bin = out_dir / "vP_compressed.bin"
+    blaris_bin = os.environ.get("BLARIS_BIN") or shutil.which("blaris")
+    if not blaris_bin:
+        candidate = toolchain.repo_root.parent / "blaris" / "target" / "release" / "blaris"
+        if candidate.exists():
+            blaris_bin = str(candidate)
+    if not blaris_bin:
+        raise ToolchainError(
+            "Blaris compression requested, but 'blaris' executable not found in PATH or BLARIS_BIN"
+        )
+    toolchain.run([
+        blaris_bin,
+        "compress",
+        "--input",
+        raw_bin.resolve(),
+        "--output",
+        compressed_bin.resolve(),
+    ])
+    return compressed_bin
+
+
+COMPRESSORS: Dict[str, CompressorFn] = {
+    "noop": compress_noop,
+    "blaris": compress_blaris,
+}
+
+
+def register_compressor(name: str, compressor_fn: CompressorFn) -> None:
+    COMPRESSORS[name.lower()] = compressor_fn
+
+
+def compress_payload(
+    config: Config,
+    toolchain: Toolchain,
+    raw_payload: Path,
+    out_dir: Path,
+) -> Path:
+    """Runs the compression hook matching config.decompressor and returns the compressed payload path."""
+    dec_norm = config.decompressor.lower()
+    compressor = COMPRESSORS.get(dec_norm)
+    if not compressor:
+        known = ", ".join(sorted(COMPRESSORS.keys()))
+        raise ToolchainError(
+            f"Unsupported decompressor/compressor '{config.decompressor}'. Supported: {known}"
+        )
+    return compressor(raw_payload, out_dir, toolchain, config)
+
+
+def generate_vp_assembly(payload_bin: Path, vp_s: Path) -> None:
+    """Generates the assembly wrapper embedding the payload into section .__sseocb_i.vP."""
+    payload_abs = payload_bin.resolve()
+    vp_s.write_text(f"""\
+.section .__sseocb_i.vP, "a", @progbits
+.globl __sseocb_i_vpbase
+.globl __sseocb_i_vpend
+.p2align 2
+__sseocb_i_vpbase:
+    .incbin "{payload_abs}"
+__sseocb_i_vpend:
+""")
 
 
 def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]:
     out = config.output_dir
     out.mkdir(parents=True, exist_ok=True)
 
+    guest_obj = compile_rv32e_if_source(
+        config.guest_obj,
+        out / "guest-compiled.o",
+        config,
+        toolchain,
+    )
+
     # 1. Pre-pass
     toolchain.run([
         toolchain.tool,
         "pre",
-        config.guest_obj,
+        guest_obj,
         out,
         "--vpbase",
         f"0x{config.vpbase:08x}",
@@ -29,7 +111,7 @@ def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
     toolchain.run([
         toolchain.tool,
         "promote",
-        config.guest_obj,
+        guest_obj,
         guest_promoted,
         "rv32i",
     ])
@@ -37,11 +119,17 @@ def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
     # 3. Promote guest native object to rv32i if present
     native_promoted = None
     if config.guest_native_obj:
+        native_obj = compile_rv32e_if_source(
+            config.guest_native_obj,
+            out / "guest-native-compiled.o",
+            config,
+            toolchain,
+        )
         native_promoted = out / "guest-native-promoted.o"
         toolchain.run([
             toolchain.tool,
             "promote",
-            config.guest_native_obj,
+            native_obj,
             native_promoted,
             "rv32i",
         ])
@@ -62,6 +150,13 @@ SECTIONS
     .text.__sseocb_g.plt : {{
         . = ALIGN(4);
         *(.text.__sseocb_g.plt)
+        . = ALIGN(4);
+    }} > FLASH
+
+    .text.__sseocb_g.native : {{
+        . = ALIGN(4);
+        *(.text.native .text.native.*)
+        *guest-native*(.text .text.*)
         . = ALIGN(4);
     }} > FLASH
 
@@ -130,15 +225,18 @@ SECTIONS
         "-nostdlib",
         f"-Wl,-T,{config.memory_ld.resolve()}",
         f"-Wl,-T,{board_ld.resolve()}",
-        f"-Wl,-T,{virtual_ld.resolve()}",
-        f"-Wl,-T,{plt_ld.resolve()}",
-        f"-Wl,@{plt_wrap.resolve()}",
     ]
 
     if config.guest_ld:
         pre_link_cmd.append(f"-Wl,-T,{config.guest_ld.resolve()}")
     if config.guest_native_ld:
         pre_link_cmd.append(f"-Wl,-T,{config.guest_native_ld.resolve()}")
+
+    pre_link_cmd.extend([
+        f"-Wl,-T,{virtual_ld.resolve()}",
+        f"-Wl,-T,{plt_ld.resolve()}",
+        f"-Wl,@{plt_wrap.resolve()}",
+    ])
 
     pre_link_cmd.extend([
         "-Wl,--unresolved-symbols=ignore-all",
@@ -165,8 +263,14 @@ SECTIONS
         out,
     ])
 
-    # 7. Build interpreter
-    int_a = toolchain.ensure_int_lib()
+    # 7. Compression hook: compress payload and update vP.s
+    raw_payload = out / "vP_raw.bin"
+    compressed_payload = compress_payload(config, toolchain, raw_payload, out)
+    vp_s = out / "vP.s"
+    generate_vp_assembly(compressed_payload, vp_s)
+
+    # 8. Build interpreter
+    int_a = toolchain.ensure_int_lib(decompressor=config.decompressor)
     int_ld = toolchain.repo_root / "crates" / "int" / "int.ld"
     int_o = out / "int.o"
 
@@ -234,15 +338,18 @@ SECTIONS
         "-nostdlib",
         f"-Wl,-T,{config.memory_ld.resolve()}",
         f"-Wl,-T,{board_ld.resolve()}",
-        f"-Wl,-T,{virtual_ld.resolve()}",
-        f"-Wl,-T,{plt_ld.resolve()}",
-        f"-Wl,@{plt_wrap.resolve()}",
     ]
 
     if config.guest_ld:
         final_link_cmd.append(f"-Wl,-T,{config.guest_ld.resolve()}")
     if config.guest_native_ld:
         final_link_cmd.append(f"-Wl,-T,{config.guest_native_ld.resolve()}")
+
+    final_link_cmd.extend([
+        f"-Wl,-T,{virtual_ld.resolve()}",
+        f"-Wl,-T,{plt_ld.resolve()}",
+        f"-Wl,@{plt_wrap.resolve()}",
+    ])
 
     final_link_cmd.extend([
         "-Wl,-e,__sseocb_i_entry",
