@@ -48,7 +48,11 @@ callbacks later used like `register_callback(&callback)`). These symbols are the
 wrapped in uncompressed trampolines which have static addresses and can be safely
 passed to external code.
 
-The entire pipeline is a bit complicated and I will explain it in detail later.
+The entire pipeline is illustrated in the architecture diagram below:
+
+## Pipeline Architecture
+
+![SSEOCB Pipeline](pipeline.drawio.png)
 
 ## Structure
 SSEOCB consists of several crates in `crates/`:

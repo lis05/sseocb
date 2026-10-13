@@ -202,6 +202,23 @@ SECTIONS
         _ebss = .;
     }} > RAM
 
+    .__sseocb_i.data : {{
+        . = ALIGN(4);
+        _i_sdata = .;
+        *(.__sseocb_i.data .__sseocb_i.data.*)
+        . = ALIGN(4);
+        _i_edata = .;
+    }} > RAM AT > FLASH
+    _i_sidata = LOADADDR(.__sseocb_i.data);
+
+    .__sseocb_i.bss : {{
+        . = ALIGN(4);
+        _i_sbss = .;
+        *(.__sseocb_i.bss .__sseocb_i.bss.*)
+        . = ALIGN(4);
+        _i_ebss = .;
+    }} > RAM
+
     _i_stack_top = ORIGIN(STACK) + LENGTH(STACK);
     _g_stack_top = _i_stack_top - 1024;
 }}

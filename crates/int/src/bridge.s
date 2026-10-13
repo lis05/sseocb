@@ -37,6 +37,29 @@ __sseocb_i_entry:
         j 3b
     4:
 
+    # Setup interpreter .data
+    la x28, _i_sidata
+    la x29, _i_sdata
+    la x30, _i_edata
+    5:
+        bgeu x29, x30, 6f
+        lw x31, 0(x28)
+        sw x31, 0(x29)
+        addi x28, x28, 4
+        addi x29, x29, 4
+        j 5b
+    6:
+
+    # Clear interpreter .bss
+    la x28, _i_sbss
+    la x29, _i_ebss
+    7:
+        bgeu x28, x29, 8f
+        sw x0, 0(x28)
+        addi x28, x28, 4
+        j 7b
+    8:
+
     # Initialize vPC
     la x25, __sseocb_g_entry
 
