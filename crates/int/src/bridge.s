@@ -139,9 +139,6 @@ __sseocb_i_write_guest_reg:
         mv x15, x26
         jr x16
 
-.globl __sseocb_i_plt_call
-__sseocb_i_plt_call:
-
 .globl __sseocb_i_native_call
 __sseocb_i_native_call:
     # __sseocb_i_native_call(addr) executes a native call into guest code.
@@ -152,3 +149,69 @@ __sseocb_i_native_call:
     jr x25
     1:
     jr x16
+
+.globl __sseocb_i_plt_call
+__sseocb_i_plt_call:
+    # __sseocb_i_plt_call transfers control from native code to the intepreter.
+    #
+    # PLT slot offset is in x31
+    # Return address is in x1 (native)
+    #
+    # Guest stack: x2
+    # Int stack: x17
+
+    # Before transfering control to the interpreter, save:
+    # x16..x30 without x17 (14x4=56 bytes)
+    # x1
+    addi x17, x17, -64
+    sw x16, 0(x17)
+    sw x18, 4(x17)
+    sw x19, 8(x17)
+    sw x20, 12(x17)
+    sw x21, 16(x17)
+    sw x22, 20(x17)
+    sw x23, 24(x17)
+    sw x24, 28(x17)
+    sw x25, 32(x17)
+    sw x26, 36(x17)
+    sw x27, 40(x17)
+    sw x28, 44(x17)
+    sw x29, 48(x17)
+    sw x30, 52(x17)
+    sw x1, 56(x17)
+
+    # Return to the epilogue
+    la x1, __sseocb_i_plt_return
+
+    # Load vPC into x10+15=x25
+    la x30, __sseocb_i.plt_vP
+    add x25, x31, x30 # slot + base
+    lw x25, 0(x25)
+
+    # Interpreter will detect plt_return and jump back here
+    jal x16, __sseocb_i_main
+
+.globl __sseocb_i_plt_return
+__sseocb_i_plt_return:
+    # __sseocb_i_plt_return transfers control back to native code from interpreter.
+
+    # Restore int state and x1
+    lw x16, 0(x17)
+    lw x18, 4(x17)
+    lw x19, 8(x17)
+    lw x20, 12(x17)
+    lw x21, 16(x17)
+    lw x22, 20(x17)
+    lw x23, 24(x17)
+    lw x24, 28(x17)
+    lw x25, 32(x17)
+    lw x26, 36(x17)
+    lw x27, 40(x17)
+    lw x28, 44(x17)
+    lw x29, 48(x17)
+    lw x30, 52(x17)
+    lw x1, 56(x17)
+    addi x17, x17, 64
+
+    # Return to native
+    jr x1

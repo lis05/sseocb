@@ -4,6 +4,7 @@ unsafe extern "C" {
     fn __sseocb_i_read_guest_reg(reg: u32) -> u32;
     fn __sseocb_i_write_guest_reg(reg: u32, value: u32);
     pub fn __sseocb_i_native_call(addr: u32);
+    static __sseocb_i_plt_return: u8;
 }
 
 pub fn read_guest_reg(reg: usize) -> u32 {
@@ -27,3 +28,8 @@ macro_rules! native_call {
     };
 }
 pub use native_call;
+
+#[inline(always)]
+pub fn plt_return_addr() -> u32 {
+    core::ptr::addr_of!(__sseocb_i_plt_return) as u32
+}

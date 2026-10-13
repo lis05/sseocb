@@ -63,10 +63,16 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             }
             Instruction::jalr { rd, rs1, imm } => {
                 let rs1_addr = bridge::read_guest_reg(rs1);
+                let target_pc = rs1_addr.wrapping_add_signed(imm) & (!1);
+
+                if target_pc == bridge::plt_return_addr() {
+                    // plt_call -> returns to plt_return
+                    return;
+                }
+
                 let link_addr = int::g_vpbase().wrapping_add(vPC).wrapping_add(4);
                 bridge::write_guest_reg(rd, link_addr);
 
-                let target_pc = rs1_addr.wrapping_add_signed(imm) & (!1);
                 if is_instr_in_vp(target_pc) {
                     vPC = target_pc.wrapping_sub(int::g_vpbase());
                 } else {

@@ -42,7 +42,7 @@ fn get_addressable_symbols(file: &object::File) -> HashMap<String, usize> {
 
     let mut map = HashMap::new();
     for (i, val) in sorted_symbols.into_iter().enumerate() {
-        map.insert(val, i);
+        map.insert(val, i * 4);
     }
 
     map
@@ -61,7 +61,7 @@ fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std
         trampolines.push_str(&format!(
             ".global {plt_sym}\n\
             {plt_sym}:\n    \
-            li x16, {num}\n    \
+            li x31, {num}\n    \
             j __sseocb_i_plt_call\n\n"
         ));
 
