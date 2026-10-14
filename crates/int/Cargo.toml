@@ -10,7 +10,9 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 rv32-isa = { path = "../rv32-isa" }
+blaris-decompress = { git = "https://github.com/lis05/blaris", default-features = false, optional = true }
 
 [features]
 default = ["noop-dec"]
 noop-dec = []
+blaris-dec = ["dep:blaris-decompress"]

@@ -13,6 +13,35 @@ COMMON_DIR="$REPO_ROOT/e2e/common"
 MEMORY_LD="$COMMON_DIR/memory.ld"
 TESTS_DIR="$REPO_ROOT/e2e/tests"
 
+DECOMPRESSOR="noop"
+EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --decompressor)
+            DECOMPRESSOR="$2"
+            shift 2
+            ;;
+        --decompressor=*)
+            DECOMPRESSOR="${1#*=}"
+            shift 1
+            ;;
+        noop|blaris)
+            DECOMPRESSOR="$1"
+            shift 1
+            ;;
+        --size)
+            EXTRA_ARGS+=(--size)
+            shift 1
+            ;;
+        *)
+            EXTRA_ARGS+=("$1")
+            shift 1
+            ;;
+    esac
+done
+
+echo "Running E2E tests with decompressor: $DECOMPRESSOR"
+
 PASS_COUNT=0
 FAIL_COUNT=0
 
@@ -75,6 +104,7 @@ for test_dir in "$TESTS_DIR"/*; do
         --guest-obj "$build_dir/main.o"
         --memory-ld "$MEMORY_LD"
         --output "$build_dir/artifacts"
+        --decompressor "$DECOMPRESSOR"
     )
 
     if [[ -f "$build_dir/native.o" ]]; then
@@ -91,6 +121,10 @@ for test_dir in "$TESTS_DIR"/*; do
 
     if [[ -f "$test_dir/native.ld" ]]; then
         cmd+=(--guest-native-ld "$test_dir/native.ld")
+    fi
+
+    if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+        cmd+=("${EXTRA_ARGS[@]}")
     fi
 
     if "${cmd[@]}"; then

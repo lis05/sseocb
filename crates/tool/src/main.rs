@@ -516,20 +516,49 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
     Ok(())
 }
 
+fn run_compress_blaris(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
+    let in_data = fs::read(input_path)?;
+    let mut out_data = vec![0u8; blaris_compress::compress::compress_bound(in_data.len())];
+    let size = blaris_compress::compress::compress(&in_data, &mut out_data);
+    out_data.truncate(size);
+    fs::write(output_path, out_data)?;
+    println!(
+        "Blaris compressed '{}' ({} bytes) -> '{}' ({} bytes, {:.2}%)",
+        input_path,
+        in_data.len(),
+        output_path,
+        size,
+        if in_data.is_empty() {
+            100.0
+        } else {
+            (size as f64 / in_data.len() as f64) * 100.0
+        }
+    );
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: tool <pre|post|promote|remap> <args...>");
+        eprintln!("Usage: tool <pre|post|promote|remap|compress-blaris> <args...>");
         eprintln!(
             "  tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
         );
         eprintln!("  tool post <linked_o> <output_dir>");
         eprintln!("  tool promote <input.o> <output.o> [rv32i|rv32e]");
         eprintln!("  tool remap <input.o> <output.o>");
+        eprintln!("  tool compress-blaris <input.bin> <output.bin>");
         std::process::exit(1);
     }
 
     match args[1].as_str() {
+        "compress-blaris" => {
+            if args.len() < 4 {
+                eprintln!("Usage: tool compress-blaris <input.bin> <output.bin>");
+                std::process::exit(1);
+            }
+            run_compress_blaris(&args[2], &args[3])?;
+        }
         "promote" => {
             if args.len() < 4 {
                 eprintln!("Usage: tool promote <input.o> <output.o> [rv32i|rv32e]");
@@ -603,7 +632,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         other => {
             eprintln!(
-                "Unknown command: '{}'. Expected 'pre', 'post', 'promote', or 'remap'",
+                "Unknown command: '{}'. Expected 'pre', 'post', 'promote', 'remap', or 'compress-blaris'",
                 other
             );
             std::process::exit(1);
@@ -801,5 +830,24 @@ mod tests {
             imm: 0,
         };
         assert!(remap_instruction(&mut instr).is_err());
+    }
+
+    #[test]
+    fn test_compress_blaris() {
+        let temp_dir = std::env::temp_dir();
+        let in_path = temp_dir.join("test_sseocb_blaris_in.bin");
+        let out_path = temp_dir.join("test_sseocb_blaris_out.bin");
+
+        let original_data =
+            b"Hello, Blaris compression inside SSEOCB tool! Repeated Repeated Repeated data!";
+        fs::write(&in_path, original_data).unwrap();
+
+        run_compress_blaris(in_path.to_str().unwrap(), out_path.to_str().unwrap()).unwrap();
+
+        let compressed_data = fs::read(&out_path).unwrap();
+        assert!(!compressed_data.is_empty());
+
+        let _ = fs::remove_file(in_path);
+        let _ = fs::remove_file(out_path);
     }
 }

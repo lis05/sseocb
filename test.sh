@@ -21,6 +21,27 @@ cargo test --workspace --exclude int
 echo "--> Running bare-metal C E2E tests..."
 bash scripts/run_tests.sh
 
-echo "--> Running orchestrator E2E tests..."
-bash e2e/test.sh
+EXTRA_ARGS=()
+DECOMPRESSOR=""
+for arg in "$@"; do
+    case "$arg" in
+        noop|blaris)
+            DECOMPRESSOR="$arg"
+            ;;
+        *)
+            EXTRA_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+if [[ -n "$DECOMPRESSOR" ]]; then
+    echo "--> Running orchestrator E2E tests ($DECOMPRESSOR)..."
+    bash e2e/test.sh "$DECOMPRESSOR" "${EXTRA_ARGS[@]}"
+else
+    echo "--> Running orchestrator E2E tests (noop)..."
+    bash e2e/test.sh noop "${EXTRA_ARGS[@]}"
+
+    echo "--> Running orchestrator E2E tests (blaris)..."
+    bash e2e/test.sh blaris "${EXTRA_ARGS[@]}"
+fi
 

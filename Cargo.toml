@@ -23,5 +23,16 @@ strip = true
 
 [profile.release.package.rv32-isa]
 opt-level = "s"
+strip = true
+
+[profile.release.package.blaris-decompress]
+opt-level = 3
+codegen-units = 1
+strip = true
+
+[profile.release.package.blaris-core]
+opt-level = 3
+codegen-units = 1
+strip = true
 
 

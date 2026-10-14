@@ -32,3 +32,4 @@ class Config:
     expected_output: Optional[Path] = None
     max_cycles: int = 100_000_000
     log: bool = False
+    size: bool = False

@@ -9,6 +9,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "blaris-compress"
+version = "0.1.0"
+source = "git+https://github.com/lis05/blaris#bfd42b450e9053a6fcf0f1e4a0cf2f551d86f292"
+dependencies = [
+ "blaris-core",
+]
+
+[[package]]
+name = "blaris-core"
+version = "0.1.0"
+source = "git+https://github.com/lis05/blaris#bfd42b450e9053a6fcf0f1e4a0cf2f551d86f292"
+
+[[package]]
+name = "blaris-decompress"
+version = "0.1.0"
+source = "git+https://github.com/lis05/blaris#bfd42b450e9053a6fcf0f1e4a0cf2f551d86f292"
+dependencies = [
+ "blaris-core",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -38,6 +59,7 @@ dependencies = [
 name = "int"
 version = "0.1.0"
 dependencies = [
+ "blaris-decompress",
  "rv32-isa",
 ]
 
@@ -177,6 +199,7 @@ dependencies = [
 name = "tool"
 version = "0.1.0"
 dependencies = [
+ "blaris-compress",
  "object",
  "rv32-isa",
  "serde",

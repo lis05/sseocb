@@ -1,8 +1,9 @@
 import argparse
 import difflib
 from pathlib import Path
+import re
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from orchestrator.config import Config
 from orchestrator.pipeline_native import build_native
@@ -103,9 +104,28 @@ def add_common_build_args(parser: argparse.ArgumentParser) -> None:
         help="Decompressor implementation (default: noop)",
     )
     parser.add_argument(
+        "--blaris",
+        dest="decompressor",
+        action="store_const",
+        const="blaris",
+        help="Use blaris decompressor (shorthand for --decompressor blaris)",
+    )
+    parser.add_argument(
+        "--noop",
+        dest="decompressor",
+        action="store_const",
+        const="noop",
+        help="Use noop decompressor (shorthand for --decompressor noop)",
+    )
+    parser.add_argument(
         "--log",
         action="store_true",
         help="Print every command executed by orchestrator",
+    )
+    parser.add_argument(
+        "--size",
+        action="store_true",
+        help="Print detailed memory size breakdown",
     )
 
 
@@ -179,7 +199,115 @@ def build_config(args: argparse.Namespace, subcommand: str, target: str) -> Conf
         expected_output=getattr(args, "expected_output", None),
         max_cycles=getattr(args, "max_cycles", 100_000_000),
         log=getattr(args, "log", False),
+        size=getattr(args, "size", False),
     )
+
+
+def parse_elf_sections(toolchain: Toolchain, elf_path: Path) -> Dict[str, int]:
+    res = toolchain.run([toolchain.llvm_readelf, "-S", elf_path])
+    pattern = re.compile(
+        r"^\s*\[\s*(\d+)\]\s+(\S+)\s+([A-Z_]+)\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)",
+        re.M,
+    )
+    sections = {}
+    for m in pattern.finditer(res.stdout):
+        _idx, sec_name, _sec_type, sec_size = m.groups()
+        sections[sec_name] = int(sec_size, 16)
+    return sections
+
+
+def print_sseocb_size_report(
+    toolchain: Toolchain,
+    sseocb_elf: Path,
+    native_elf_path: Optional[Path] = None,
+) -> None:
+    sections = parse_elf_sections(toolchain, sseocb_elf)
+    uncompressed = sections.get(".__sseocb_g.vP", 0)
+    compressed = sections.get(".__sseocb_i.vP", 0)
+    decompressor = sum(
+        sz
+        for name, sz in sections.items()
+        if name == ".__sseocb_i.decompressor" or name.startswith(".__sseocb_i.decompressor.")
+    )
+    interpreter = sum(
+        sz
+        for name, sz in sections.items()
+        if name.startswith(".__sseocb_i.") and name != ".__sseocb_i.vP" and name != ".__sseocb_i.bss"
+    )
+    saved = uncompressed - (interpreter + compressed)
+
+    print("=== Memory Size Breakdown ===")
+    print(f"Uncompressed code:       {uncompressed:,} bytes")
+    if uncompressed > 0:
+        comp_pct = (compressed / uncompressed) * 100.0
+        print(f"Compressed code:         {compressed:,} bytes ({comp_pct:.1f}% of uncompressed)")
+    else:
+        print(f"Compressed code:         {compressed:,} bytes")
+
+    if interpreter > 0:
+        dec_pct = (decompressor / interpreter) * 100.0
+        print(f"Interpreter:             {interpreter:,} bytes")
+        print(f"  └─ Decompressor:       {decompressor:,} bytes ({dec_pct:.1f}% of interpreter)")
+    else:
+        print(f"Interpreter:             {interpreter:,} bytes")
+        print(f"  └─ Decompressor:       {decompressor:,} bytes")
+
+    if saved >= 0:
+        if uncompressed > 0:
+            saved_pct = (saved / uncompressed) * 100.0
+            print(f"Memory saved:            {saved:,} bytes ({saved_pct:.1f}% saved)")
+        else:
+            print(f"Memory saved:            {saved:,} bytes")
+    else:
+        overhead = -saved
+        print(f"Memory saved:            {saved:,} bytes (net overhead: {overhead:,} bytes)")
+
+    if native_elf_path and native_elf_path.exists():
+        native_sections = parse_elf_sections(toolchain, native_elf_path)
+        native_flash = (
+            native_sections.get(".text", 0)
+            + native_sections.get(".rodata", 0)
+            + native_sections.get(".data", 0)
+        )
+        sseocb_flash = sum(
+            sz
+            for name, sz in sections.items()
+            if not name.endswith(".bss") and name not in (
+                ".comment",
+                ".riscv.attributes",
+                ".symtab",
+                ".shstrtab",
+                ".strtab",
+                ".__sseocb_g.vP",
+            )
+        )
+        print("Total binary flash size:")
+        print(f"  Native:                {native_flash:,} bytes")
+        print(f"  SSEOCB:                {sseocb_flash:,} bytes")
+        delta = native_flash - sseocb_flash
+        if delta >= 0:
+            print(f"  Flash saved:           {delta:,} bytes")
+        else:
+            print(f"  Flash overhead:        {-delta:,} bytes")
+
+
+def print_native_size_report(toolchain: Toolchain, native_elf: Path) -> None:
+    sections = parse_elf_sections(toolchain, native_elf)
+    text = sections.get(".text", 0)
+    rodata = sections.get(".rodata", 0)
+    data = sections.get(".data", 0)
+    bss = sections.get(".bss", 0)
+    flash = text + rodata + data
+    ram = data + bss
+
+    print("=== Native Memory Size Breakdown ===")
+    print(f"Flash footprint:         {flash:,} bytes")
+    print(f"  .text:                 {text:,} bytes")
+    print(f"  .rodata:               {rodata:,} bytes")
+    print(f"  .data:                 {data:,} bytes")
+    print(f"RAM footprint:           {ram:,} bytes")
+    print(f"  .data:                 {data:,} bytes")
+    print(f"  .bss:                  {bss:,} bytes")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -221,13 +349,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         if config.subcommand == "build" and config.target == "native":
-            bin_path, entry_addr, _ = build_native(config, toolchain)
+            bin_path, entry_addr, elf_path = build_native(config, toolchain)
             print(f"Native binary built: {bin_path} (entry: {entry_addr})")
+            if config.size:
+                print_native_size_report(toolchain, elf_path)
             return 0
 
         if config.subcommand == "build" and config.target == "sseocb":
-            bin_path, entry_addr, _ = build_sseocb(config, toolchain)
+            bin_path, entry_addr, elf_path = build_sseocb(config, toolchain)
             print(f"SSEOCB binary built: {bin_path} (entry: {entry_addr})")
+            if config.size:
+                print_sseocb_size_report(toolchain, elf_path)
             return 0
 
         if config.subcommand == "run" and config.target == "native":
@@ -246,6 +378,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not config.debug:
                 print(f"Native cycles: {sim_res.cycles}")
                 verify_output(sim_res.stdout, config.expected_output)
+            if config.size:
+                print_native_size_report(toolchain, elf_path)
             return 0
 
         if config.subcommand == "run" and config.target == "sseocb":
@@ -264,6 +398,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not config.debug:
                 print(f"SSEOCB cycles: {sim_res.cycles}")
                 verify_output(sim_res.stdout, config.expected_output)
+            if config.size:
+                print_sseocb_size_report(toolchain, elf_path)
             return 0
 
         if config.subcommand == "run" and config.target == "bench":
@@ -324,6 +460,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"SSEOCB cycles:  {sseocb_res.cycles:,}")
             print(f"Slowdown:       {slowdown:.2f}x")
             print("Output verify:  PASSED")
+            if config.size:
+                print_sseocb_size_report(toolchain, elf_path, native_elf_path=native_elf)
             return 0
 
         raise ToolchainError(f"Unknown subcommand/target: {config.subcommand} {config.target}")

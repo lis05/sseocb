@@ -32,6 +32,15 @@ for arg in "$@"; do
         --clean)
             rm -rf artifacts
             ;;
+        --blaris)
+            EXTRA_ARGS+=(--decompressor blaris)
+            ;;
+        --noop)
+            EXTRA_ARGS+=(--decompressor noop)
+            ;;
+        --size)
+            EXTRA_ARGS+=(--size)
+            ;;
         --log)
             EXTRA_ARGS+=(--log)
             LOG=1
@@ -44,6 +53,9 @@ for arg in "$@"; do
             echo "  --native      Run native target (without SSEOCB)"
             echo "  --debug       Run in interactive simulator debugger (default unless --bench)"
             echo "  --run         Run headless without debugger and print UART output"
+            echo "  --blaris      Use blaris decompressor (default: noop)"
+            echo "  --noop        Use noop decompressor"
+            echo "  --size        Print detailed memory size breakdown"
             echo "  --log         Print every command executed"
             echo "  --clean       Clean artifacts/ directory before building"
             echo "  -h, --help    Show this help message"

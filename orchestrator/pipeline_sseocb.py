@@ -18,23 +18,12 @@ def compress_noop(raw_bin: Path, out_dir: Path, toolchain: Toolchain, config: Co
 
 
 def compress_blaris(raw_bin: Path, out_dir: Path, toolchain: Toolchain, config: Config) -> Path:
-    """Blaris compression hook."""
+    """Blaris compression hook using tool compress-blaris."""
     compressed_bin = out_dir / "vP_compressed.bin"
-    blaris_bin = os.environ.get("BLARIS_BIN") or shutil.which("blaris")
-    if not blaris_bin:
-        candidate = toolchain.repo_root.parent / "blaris" / "target" / "release" / "blaris"
-        if candidate.exists():
-            blaris_bin = str(candidate)
-    if not blaris_bin:
-        raise ToolchainError(
-            "Blaris compression requested, but 'blaris' executable not found in PATH or BLARIS_BIN"
-        )
     toolchain.run([
-        blaris_bin,
-        "compress",
-        "--input",
+        toolchain.tool,
+        "compress-blaris",
         raw_bin.resolve(),
-        "--output",
         compressed_bin.resolve(),
     ])
     return compressed_bin
@@ -177,9 +166,15 @@ SECTIONS
         . = ALIGN(4);
     }} > FLASH
 
+    .__sseocb_i.decompressor : {{
+        . = ALIGN(4);
+        *(.__sseocb_i.decompressor .__sseocb_i.decompressor.*)
+        . = ALIGN(4);
+    }} > FLASH
+
     .__sseocb_i.text : {{
         . = ALIGN(4);
-        *(__sseocb_i.text)
+        *(.__sseocb_i.text .__sseocb_i.text.*)
         . = ALIGN(4);
     }} > FLASH
 

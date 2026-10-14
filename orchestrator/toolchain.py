@@ -3,7 +3,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 
 class ToolchainError(RuntimeError):
@@ -90,6 +90,10 @@ class Toolchain:
             else:
                 feature_args = ["--no-default-features", "--features", f"{dec_norm}-dec"]
 
+            env = os.environ.copy()
+            existing_rustflags = env.get("RUSTFLAGS", "")
+            env["RUSTFLAGS"] = f"{existing_rustflags} -Zunstable-options -Cpanic=immediate-abort".strip()
+
             self.run([
                 self.cargo,
                 "+nightly",
@@ -102,7 +106,7 @@ class Toolchain:
                 "-Z",
                 "build-std=core,compiler_builtins",
                 *feature_args,
-            ], cwd=self.repo_root)
+            ], cwd=self.repo_root, env=env)
             int_a.parent.mkdir(parents=True, exist_ok=True)
             stamp_file.write_text(dec_norm)
 
@@ -114,6 +118,7 @@ class Toolchain:
         self,
         cmd: List[Union[str, Path]],
         cwd: Optional[Path] = None,
+        env: Optional[Dict[str, str]] = None,
         capture_output: bool = True,
         check: bool = True,
     ) -> subprocess.CompletedProcess:
@@ -123,6 +128,7 @@ class Toolchain:
         res = subprocess.run(
             str_cmd,
             cwd=str(cwd) if cwd else None,
+            env=env,
             capture_output=capture_output,
             text=True,
         )
