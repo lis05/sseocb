@@ -1,4 +1,4 @@
-.section .text.__sseocb_i.bridge, "ax", @progbits
+.section __sseocb_i.bridge, "ax", @progbits
 
 # int operates in the top half of rv32i registers (x0, x16..x31) where it sees
 # x16..x30 as its x1..x15. x31 is scratch. Offset is 15.
@@ -207,12 +207,13 @@ __sseocb_i_plt_call:
     la x1, __sseocb_i_plt_return
 
     # Load vPC into x10+15=x25
-    la x30, __sseocb_i.plt_vP
+    la x30, __sseocb_i_plt_offsets
     add x25, x31, x30 # slot + base
     lw x25, 0(x25)
 
     # Interpreter will detect plt_return and jump back here
     jal x16, __sseocb_i_main
+    # Fallthrough intended
 
 .globl __sseocb_i_plt_return
 __sseocb_i_plt_return:

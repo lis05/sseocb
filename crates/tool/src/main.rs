@@ -49,7 +49,7 @@ fn get_addressable_symbols(file: &object::File) -> HashMap<String, usize> {
 }
 
 fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std::io::Result<()> {
-    let mut trampolines = String::from(".section .text.__sseocb_g.plt, \"ax\", @progbits\n\n");
+    let mut trampolines = String::from(".section .__sseocb_g.text.plt, \"ax\", @progbits\n\n");
     let mut linker = String::new();
     let mut wrap = String::new();
 
@@ -65,6 +65,7 @@ fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std
             j __sseocb_i_plt_call\n\n"
         ));
 
+        // TODO: This does NOT work with static symbols.
         linker.push_str(&format!("__wrap_{sym} = {plt_sym};\n"));
         wrap.push_str(&format!("--wrap={sym}\n"));
     }
@@ -452,9 +453,9 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
     entries.sort_by_key(|(_, slot)| *slot);
 
     let mut s_content = String::from(
-        ".section .__sseocb_i.rodata, \"a\", @progbits\n\
-        .global __sseocb_i.plt_vP\n\
-        __sseocb_i.plt_vP:\n",
+        ".section .__sseocb_i.rodata.plt, \"a\", @progbits\n\
+        .global __sseocb_i_plt_offsets\n\
+        __sseocb_i_plt_offsets:\n",
     );
 
     for (sym_name, slot) in entries {

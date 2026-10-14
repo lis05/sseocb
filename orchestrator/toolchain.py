@@ -11,7 +11,12 @@ class ToolchainError(RuntimeError):
 
 
 class Toolchain:
-    def __init__(self, repo_root: Optional[Path] = None, log: bool = False):
+    def __init__(
+        self,
+        repo_root: Optional[Path] = None,
+        log: bool = False,
+        build_crates: bool = True,
+    ):
         if repo_root is None:
             repo_root = Path(__file__).resolve().parent.parent
         self.repo_root = repo_root
@@ -23,8 +28,11 @@ class Toolchain:
         self.llvm_readelf = self._find_tool("llvm-readelf")
         self.cargo = self._find_tool("cargo")
 
-        self.sim = self._ensure_target_bin("sim")
-        self.tool = self._ensure_target_bin("tool")
+        if build_crates:
+            self.build_host_crates()
+
+        self.sim = self._get_target_bin("sim")
+        self.tool = self._get_target_bin("tool")
 
     def _find_tool(self, name: str) -> Path:
         found = shutil.which(name)
@@ -32,17 +40,34 @@ class Toolchain:
             raise ToolchainError(f"Required tool '{name}' not found in PATH")
         return Path(found)
 
-    def _ensure_target_bin(self, crate_name: str) -> Path:
+    def build_host_crates(self) -> None:
+        """Build crates/tool, crates/rv32-isa, and crates/sim before running anything."""
+        self.run(
+            [
+                self.cargo,
+                "build",
+                "--manifest-path",
+                str(self.repo_root / "Cargo.toml"),
+                "-p",
+                "tool",
+                "-p",
+                "rv32-isa",
+                "-p",
+                "sim",
+            ],
+            cwd=self.repo_root,
+        )
+
+    def _get_target_bin(self, crate_name: str) -> Path:
         bin_path = self.repo_root / "target" / "debug" / crate_name
         if not bin_path.exists():
-            subprocess.run(
-                [str(self.cargo), "build", "-p", crate_name],
-                cwd=str(self.repo_root),
-                check=True,
-            )
+            self.build_host_crates()
         if not bin_path.exists():
             raise ToolchainError(f"Failed to find or build '{crate_name}' at {bin_path}")
         return bin_path
+
+    def _ensure_target_bin(self, crate_name: str) -> Path:
+        return self._get_target_bin(crate_name)
 
     def ensure_int_lib(self, decompressor: str = "noop") -> Path:
         int_a = (

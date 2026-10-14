@@ -147,40 +147,9 @@ SECTIONS
         . = ALIGN(4);
     }} > FLASH
 
-    .text.__sseocb_g.plt : {{
+    .__sseocb_g.text.plt : {{
         . = ALIGN(4);
-        *(.text.__sseocb_g.plt)
-        . = ALIGN(4);
-    }} > FLASH
-
-    .text.__sseocb_g.native : {{
-        . = ALIGN(4);
-        *(.text.native .text.native.*)
-        *guest-native*(.text .text.*)
-        . = ALIGN(4);
-    }} > FLASH
-
-    .text.__sseocb_i.rust : {{
-        . = ALIGN(4);
-        *(.text.__sseocb_i.rust)
-        . = ALIGN(4);
-    }} > FLASH
-
-    .text.__sseocb_i.bridge : {{
-        . = ALIGN(4);
-        *(.text.__sseocb_i.bridge)
-        . = ALIGN(4);
-    }} > FLASH
-
-    .__sseocb_i.rodata : {{
-        . = ALIGN(4);
-        *(.__sseocb_i.rodata .__sseocb_i.rodata.*)
-        . = ALIGN(4);
-    }} > FLASH
-
-    .__sseocb_i.vP : {{
-        . = ALIGN(4);
-        *(.__sseocb_i.vP)
+        *(.__sseocb_g.text.plt)
         . = ALIGN(4);
     }} > FLASH
 
@@ -202,6 +171,30 @@ SECTIONS
         _ebss = .;
     }} > RAM
 
+    .__sseocb_g.text.native : {{
+        . = ALIGN(4);
+        *guest-native-promoted.o(.text .text.*)
+        . = ALIGN(4);
+    }} > FLASH
+
+    .__sseocb_i.text : {{
+        . = ALIGN(4);
+        *(__sseocb_i.text)
+        . = ALIGN(4);
+    }} > FLASH
+
+    .__sseocb_i.bridge : {{
+        . = ALIGN(4);
+        *(__sseocb_i.bridge)
+        . = ALIGN(4);
+    }} > FLASH
+
+    .__sseocb_i.rodata : {{
+        . = ALIGN(4);
+        *(.__sseocb_i.rodata .__sseocb_i.rodata.*)
+        . = ALIGN(4);
+    }} > FLASH
+
     .__sseocb_i.data : {{
         . = ALIGN(4);
         _i_sdata = .;
@@ -218,6 +211,12 @@ SECTIONS
         . = ALIGN(4);
         _i_ebss = .;
     }} > RAM
+
+    .__sseocb_i.vP : {{
+        . = ALIGN(4);
+        *(.__sseocb_i.vP)
+        . = ALIGN(4);
+    }} > FLASH
 
     _i_stack_top = ORIGIN(STACK) + LENGTH(STACK);
     _g_stack_top = _i_stack_top - 1024;

@@ -25,14 +25,14 @@ void _start(void) {
     int step = 1;
     unsigned int n = 3;
 
-    while (count < 10000) {
+    while (count < 1000) {
         if (is_prime(n)) {
             count++;
             step++;
             if (step == 100) {
                 step = 0;
                 print_uint(n);
-                if (count == 10000) {
+                if (count == 1000) {
                     uart_putc('\n');
                 } else {
                     uart_putc(' ');
