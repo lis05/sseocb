@@ -216,98 +216,75 @@ def parse_elf_sections(toolchain: Toolchain, elf_path: Path) -> Dict[str, int]:
     return sections
 
 
+def print_size_report(toolchain: Toolchain, elf_path: Path) -> None:
+    try:
+        display_path = elf_path.relative_to(Path.cwd())
+    except ValueError:
+        display_path = elf_path
+
+    res = toolchain.run([toolchain.llvm_size, "-A", str(display_path)])
+    lines = res.stdout.splitlines()
+    if len(lines) < 2:
+        return
+
+    ignored = {".comment", ".riscv.attributes"}
+    new_lines = []
+    total_size = 0
+    orig_vp: Optional[int] = None
+    comp_vp: Optional[int] = None
+    header_len = 0
+
+    for line in lines:
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] in ignored:
+            continue
+        if parts[0] == "section":
+            header_len = len(line)
+            new_lines.append(line)
+            continue
+        if parts[0] == "Total" and len(parts) >= 2:
+            old_tot = parts[1]
+            prefix = line[:line.rfind(old_tot)]
+            width = len(parts[1]) + len(prefix) - len("Total")
+            new_lines.append(f"Total{total_size:>{width}}")
+            continue
+
+        if len(parts) >= 3 and parts[0] != "section":
+            name = parts[0]
+            try:
+                sz = int(parts[1])
+                total_size += sz
+                if name == ".__sseocb_g.vP":
+                    orig_vp = sz
+                elif name == ".__sseocb_i.vP":
+                    comp_vp = sz
+
+                idx_sz = line.find(parts[1], len(parts[0]))
+                end_sz = idx_sz + len(parts[1])
+                prefix = line[:end_sz]
+                addr_val = int(parts[2])
+                addr_hex = f"0x{addr_val:x}" if addr_val != 0 else "0"
+                addr_field_width = max(len(addr_hex) + 1, header_len - end_sz) if header_len > end_sz else len(addr_hex) + 2
+                new_lines.append(f"{prefix}{addr_hex:>{addr_field_width}}")
+                continue
+            except ValueError:
+                pass
+        new_lines.append(line)
+
+    print("\n".join(new_lines))
+
 def print_sseocb_size_report(
     toolchain: Toolchain,
     sseocb_elf: Path,
     native_elf_path: Optional[Path] = None,
 ) -> None:
-    sections = parse_elf_sections(toolchain, sseocb_elf)
-    uncompressed = sections.get(".__sseocb_g.vP", 0)
-    compressed = sections.get(".__sseocb_i.vP", 0)
-    decompressor = sum(
-        sz
-        for name, sz in sections.items()
-        if name == ".__sseocb_i.decompressor" or name.startswith(".__sseocb_i.decompressor.")
-    )
-    interpreter = sum(
-        sz
-        for name, sz in sections.items()
-        if name.startswith(".__sseocb_i.") and name != ".__sseocb_i.vP" and name != ".__sseocb_i.bss"
-    )
-    saved = uncompressed - (interpreter + compressed)
-
-    print("=== Memory Size Breakdown ===")
-    print(f"Uncompressed code:       {uncompressed:,} bytes")
-    if uncompressed > 0:
-        comp_pct = (compressed / uncompressed) * 100.0
-        print(f"Compressed code:         {compressed:,} bytes ({comp_pct:.1f}% of uncompressed)")
-    else:
-        print(f"Compressed code:         {compressed:,} bytes")
-
-    if interpreter > 0:
-        dec_pct = (decompressor / interpreter) * 100.0
-        print(f"Interpreter:             {interpreter:,} bytes")
-        print(f"  └─ Decompressor:       {decompressor:,} bytes ({dec_pct:.1f}% of interpreter)")
-    else:
-        print(f"Interpreter:             {interpreter:,} bytes")
-        print(f"  └─ Decompressor:       {decompressor:,} bytes")
-
-    if saved >= 0:
-        if uncompressed > 0:
-            saved_pct = (saved / uncompressed) * 100.0
-            print(f"Memory saved:            {saved:,} bytes ({saved_pct:.1f}% saved)")
-        else:
-            print(f"Memory saved:            {saved:,} bytes")
-    else:
-        overhead = -saved
-        print(f"Memory saved:            {saved:,} bytes (net overhead: {overhead:,} bytes)")
-
-    if native_elf_path and native_elf_path.exists():
-        native_sections = parse_elf_sections(toolchain, native_elf_path)
-        native_flash = (
-            native_sections.get(".text", 0)
-            + native_sections.get(".rodata", 0)
-            + native_sections.get(".data", 0)
-        )
-        sseocb_flash = sum(
-            sz
-            for name, sz in sections.items()
-            if not name.endswith(".bss") and name not in (
-                ".comment",
-                ".riscv.attributes",
-                ".symtab",
-                ".shstrtab",
-                ".strtab",
-                ".__sseocb_g.vP",
-            )
-        )
-        print("Total binary flash size:")
-        print(f"  Native:                {native_flash:,} bytes")
-        print(f"  SSEOCB:                {sseocb_flash:,} bytes")
-        delta = native_flash - sseocb_flash
-        if delta >= 0:
-            print(f"  Flash saved:           {delta:,} bytes")
-        else:
-            print(f"  Flash overhead:        {-delta:,} bytes")
+    print_size_report(toolchain, sseocb_elf)
 
 
 def print_native_size_report(toolchain: Toolchain, native_elf: Path) -> None:
-    sections = parse_elf_sections(toolchain, native_elf)
-    text = sections.get(".text", 0)
-    rodata = sections.get(".rodata", 0)
-    data = sections.get(".data", 0)
-    bss = sections.get(".bss", 0)
-    flash = text + rodata + data
-    ram = data + bss
-
-    print("=== Native Memory Size Breakdown ===")
-    print(f"Flash footprint:         {flash:,} bytes")
-    print(f"  .text:                 {text:,} bytes")
-    print(f"  .rodata:               {rodata:,} bytes")
-    print(f"  .data:                 {data:,} bytes")
-    print(f"RAM footprint:           {ram:,} bytes")
-    print(f"  .data:                 {data:,} bytes")
-    print(f"  .bss:                  {bss:,} bytes")
+    print_size_report(toolchain, native_elf)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -372,8 +349,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 elf_path=elf_path,
                 max_cycles=config.max_cycles,
                 debug=config.debug,
+                stream_output=config.print_output,
             )
-            if config.print_output:
+            if config.print_output and not sim_res.streamed:
                 print(sim_res.stdout, end="")
             if not config.debug:
                 print(f"Native cycles: {sim_res.cycles}")
@@ -392,8 +370,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 elf_path=elf_path,
                 max_cycles=config.max_cycles,
                 debug=config.debug,
+                stream_output=config.print_output,
             )
-            if config.print_output:
+            if config.print_output and not sim_res.streamed:
                 print(sim_res.stdout, end="")
             if not config.debug:
                 print(f"SSEOCB cycles: {sim_res.cycles}")
@@ -403,7 +382,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
         if config.subcommand == "run" and config.target == "bench":
-            # 1. Run Native
+            # 1. Run Native (quiet)
             native_bin, native_entry, native_elf = build_native(config, toolchain)
             native_res = run_sim(
                 toolchain,
@@ -413,9 +392,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 elf_path=native_elf,
                 max_cycles=config.max_cycles,
                 debug=False,
+                stream_output=False,
             )
 
-            # 2. Run SSEOCB
+            # 2. Run SSEOCB (stream live if print_output is enabled)
             sseocb_bin, entry_addr, elf_path = build_sseocb(config, toolchain)
             sseocb_res = run_sim(
                 toolchain,
@@ -425,10 +405,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 elf_path=elf_path,
                 max_cycles=config.max_cycles,
                 debug=False,
+                stream_output=config.print_output,
             )
 
-            if config.print_output:
-                print(native_res.stdout, end="")
+            if config.print_output and not sseocb_res.streamed:
+                print(sseocb_res.stdout, end="")
 
             # 3. Output verification
             verify_output(native_res.stdout, config.expected_output)

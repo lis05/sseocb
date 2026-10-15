@@ -26,6 +26,7 @@ class Toolchain:
         self.ld_lld = self._find_tool("ld.lld")
         self.llvm_objcopy = self._find_tool("llvm-objcopy")
         self.llvm_readelf = self._find_tool("llvm-readelf")
+        self.llvm_size = self._find_tool("llvm-size")
         self.cargo = self._find_tool("cargo")
 
         if build_crates:
