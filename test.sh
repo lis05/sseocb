@@ -25,7 +25,7 @@ EXTRA_ARGS=()
 DECOMPRESSOR=""
 for arg in "$@"; do
     case "$arg" in
-        noop|blaris)
+        native|noop|blaris|graemi|all)
             DECOMPRESSOR="$arg"
             ;;
         *)
@@ -38,10 +38,7 @@ if [[ -n "$DECOMPRESSOR" ]]; then
     echo "--> Running orchestrator E2E tests ($DECOMPRESSOR)..."
     bash e2e/test.sh "$DECOMPRESSOR" "${EXTRA_ARGS[@]}"
 else
-    echo "--> Running orchestrator E2E tests (noop)..."
-    bash e2e/test.sh noop "${EXTRA_ARGS[@]}"
-
-    echo "--> Running orchestrator E2E tests (blaris)..."
-    bash e2e/test.sh blaris "${EXTRA_ARGS[@]}"
+    echo "--> Running orchestrator E2E tests (native, noop, graemi, blaris)..."
+    bash e2e/test.sh "${EXTRA_ARGS[@]}"
 fi
 

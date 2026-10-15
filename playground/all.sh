@@ -36,6 +36,9 @@ for arg in "$@"; do
         --blaris)
             EXTRA_ARGS+=(--decompressor blaris)
             ;;
+        --graemi)
+            EXTRA_ARGS+=(--decompressor graemi)
+            ;;
         --noop)
             EXTRA_ARGS+=(--decompressor noop)
             ;;

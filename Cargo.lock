@@ -56,10 +56,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "graemi-compress"
+version = "0.1.0"
+source = "git+https://github.com/lis05/graemi#909f469457ec2ce3f2bfa4361e08dad955bf8587"
+dependencies = [
+ "graemi-core",
+]
+
+[[package]]
+name = "graemi-core"
+version = "0.1.0"
+source = "git+https://github.com/lis05/graemi#909f469457ec2ce3f2bfa4361e08dad955bf8587"
+
+[[package]]
+name = "graemi-decompress"
+version = "0.1.0"
+source = "git+https://github.com/lis05/graemi#909f469457ec2ce3f2bfa4361e08dad955bf8587"
+dependencies = [
+ "graemi-core",
+]
+
+[[package]]
 name = "int"
 version = "0.1.0"
 dependencies = [
  "blaris-decompress",
+ "graemi-decompress",
  "rv32-isa",
 ]
 
@@ -200,6 +222,8 @@ name = "tool"
 version = "0.1.0"
 dependencies = [
  "blaris-compress",
+ "graemi-compress",
+ "graemi-decompress",
  "object",
  "rv32-isa",
  "serde",

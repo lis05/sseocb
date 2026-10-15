@@ -111,6 +111,13 @@ def add_common_build_args(parser: argparse.ArgumentParser) -> None:
         help="Use blaris decompressor (shorthand for --decompressor blaris)",
     )
     parser.add_argument(
+        "--graemi",
+        dest="decompressor",
+        action="store_const",
+        const="graemi",
+        help="Use graemi decompressor (shorthand for --decompressor graemi)",
+    )
+    parser.add_argument(
         "--noop",
         dest="decompressor",
         action="store_const",
@@ -162,12 +169,13 @@ def verify_output(actual: str, expected_path: Optional[Path]) -> None:
         return
     if not expected_path.exists():
         raise ToolchainError(f"Expected output file not found: {expected_path}")
-    expected = expected_path.read_text()
-    if actual != expected:
+    expected = expected_path.read_text().replace("\r\n", "\n")
+    actual_norm = actual.replace("\r\n", "\n")
+    if actual_norm != expected:
         diff = "\n".join(
             difflib.unified_diff(
                 expected.splitlines(),
-                actual.splitlines(),
+                actual_norm.splitlines(),
                 fromfile="expected",
                 tofile="actual",
                 lineterm="",
@@ -362,8 +370,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             if config.print_output and not sim_res.streamed:
                 print(sim_res.stdout, end="")
             if not config.debug:
-                print(f"Native cycles: {sim_res.cycles}")
+                print(f"Native cycles:  {sim_res.cycles:,}")
                 verify_output(sim_res.stdout, config.expected_output)
+                if config.expected_output:
+                    print("Output verify:  PASSED")
             if config.size:
                 print_native_size_report(toolchain, elf_path)
             return 0
@@ -383,8 +393,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             if config.print_output and not sim_res.streamed:
                 print(sim_res.stdout, end="")
             if not config.debug:
-                print(f"SSEOCB cycles: {sim_res.cycles}")
+                print(f"SSEOCB cycles:  {sim_res.cycles:,}")
                 verify_output(sim_res.stdout, config.expected_output)
+                if config.expected_output:
+                    print("Output verify:  PASSED")
             if config.size:
                 print_sseocb_size_report(toolchain, elf_path)
             return 0

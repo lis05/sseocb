@@ -29,9 +29,22 @@ def compress_blaris(raw_bin: Path, out_dir: Path, toolchain: Toolchain, config: 
     return compressed_bin
 
 
+def compress_graemi(raw_bin: Path, out_dir: Path, toolchain: Toolchain, config: Config) -> Path:
+    """Graemi compression hook using tool compress-graemi."""
+    compressed_bin = out_dir / "vP_compressed.bin"
+    toolchain.run([
+        toolchain.tool,
+        "compress-graemi",
+        raw_bin.resolve(),
+        compressed_bin.resolve(),
+    ])
+    return compressed_bin
+
+
 COMPRESSORS: Dict[str, CompressorFn] = {
     "noop": compress_noop,
     "blaris": compress_blaris,
+    "graemi": compress_graemi,
 }
 
 
@@ -297,6 +310,16 @@ SECTIONS
         "__sseocb_i_main",
         int_a,
         "-o",
+        int_o,
+    ])
+
+    # Localize internal interpreter symbols (e.g. compiler_builtins like __mulsi3)
+    # so they do not collide with or get overridden by guest/native symbols.
+    toolchain.run([
+        toolchain.llvm_objcopy,
+        "--wildcard",
+        "--keep-global-symbol",
+        "__sseocb_*",
         int_o,
     ])
 

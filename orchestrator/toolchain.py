@@ -90,6 +90,8 @@ class Toolchain:
                 feature_args = ["--no-default-features", "--features", "noop-dec"]
             elif dec_norm == "blaris":
                 feature_args = ["--no-default-features", "--features", "blaris-dec"]
+            elif dec_norm == "graemi":
+                feature_args = ["--no-default-features", "--features", "graemi-dec"]
             else:
                 feature_args = ["--no-default-features", "--features", f"{dec_norm}-dec"]
 

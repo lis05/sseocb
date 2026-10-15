@@ -537,10 +537,33 @@ fn run_compress_blaris(input_path: &str, output_path: &str) -> Result<(), Box<dy
     Ok(())
 }
 
+fn run_compress_graemi(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> {
+    let in_data = fs::read(input_path)?;
+    // Use 1% checkpoints for speed
+    let checkpoints = (in_data.len() / 100).max(1);
+    let mut out_data = vec![0u8; graemi_compress::compress_bound(in_data.len(), checkpoints)];
+    let size = graemi_compress::compress(&in_data, &mut out_data, checkpoints);
+    out_data.truncate(size);
+    fs::write(output_path, out_data)?;
+    println!(
+        "Graemi compressed '{}' ({} bytes) -> '{}' ({} bytes, {:.2}%)",
+        input_path,
+        in_data.len(),
+        output_path,
+        size,
+        if in_data.is_empty() {
+            100.0
+        } else {
+            (size as f64 / in_data.len() as f64) * 100.0
+        }
+    );
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: tool <pre|post|promote|remap|compress-blaris> <args...>");
+        eprintln!("Usage: tool <pre|post|promote|remap|compress-blaris|compress-graemi> <args...>");
         eprintln!(
             "  tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
         );
@@ -548,6 +571,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("  tool promote <input.o> <output.o> [rv32i|rv32e]");
         eprintln!("  tool remap <input.o> <output.o>");
         eprintln!("  tool compress-blaris <input.bin> <output.bin>");
+        eprintln!("  tool compress-graemi <input.bin> <output.bin>");
         std::process::exit(1);
     }
 
@@ -558,6 +582,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 std::process::exit(1);
             }
             run_compress_blaris(&args[2], &args[3])?;
+        }
+        "compress-graemi" => {
+            if args.len() < 4 {
+                eprintln!("Usage: tool compress-graemi <input.bin> <output.bin>");
+                std::process::exit(1);
+            }
+            run_compress_graemi(&args[2], &args[3])?;
         }
         "promote" => {
             if args.len() < 4 {
@@ -632,7 +663,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         other => {
             eprintln!(
-                "Unknown command: '{}'. Expected 'pre', 'post', 'promote', 'remap', or 'compress-blaris'",
+                "Unknown command: '{}'. Expected 'pre', 'post', 'promote', 'remap', 'compress-blaris', or 'compress-graemi'",
                 other
             );
             std::process::exit(1);
@@ -846,6 +877,37 @@ mod tests {
 
         let compressed_data = fs::read(&out_path).unwrap();
         assert!(!compressed_data.is_empty());
+
+        let _ = fs::remove_file(in_path);
+        let _ = fs::remove_file(out_path);
+    }
+
+    #[test]
+    fn test_compress_graemi() {
+        let temp_dir = std::env::temp_dir();
+        let in_path = temp_dir.join("test_sseocb_graemi_in.bin");
+        let out_path = temp_dir.join("test_sseocb_graemi_out.bin");
+
+        let original_data =
+            b"Hello, Graemi compression inside SSEOCB tool! Repeated Repeated Repeated data!";
+        fs::write(&in_path, original_data).unwrap();
+
+        run_compress_graemi(in_path.to_str().unwrap(), out_path.to_str().unwrap()).unwrap();
+
+        let compressed_data = fs::read(&out_path).unwrap();
+        assert!(!compressed_data.is_empty());
+
+        for offset in (0..original_data.len()).step_by(4) {
+            let win = (original_data.len() - offset).min(4);
+            let mut buf = [0u8; 4];
+            let ok = graemi_decompress::decompress(&compressed_data, &mut buf[..win], offset);
+            assert!(ok, "failed to decompress at offset {offset}");
+            assert_eq!(
+                &buf[..win],
+                &original_data[offset..offset + win],
+                "mismatch at offset {offset}"
+            );
+        }
 
         let _ = fs::remove_file(in_path);
         let _ = fs::remove_file(out_path);

@@ -35,4 +35,14 @@ opt-level = 3
 codegen-units = 1
 strip = true
 
+[profile.release.package.graemi-decompress]
+opt-level = 3
+codegen-units = 1
+strip = true
+
+[profile.release.package.graemi-core]
+opt-level = 3
+codegen-units = 1
+strip = true
+
 
