@@ -263,12 +263,13 @@ def print_size_report(toolchain: Toolchain, elf_path: Path) -> None:
             name = parts[0]
             try:
                 sz = int(parts[1])
-                total_size += sz
                 if name == ".__sseocb_g.vP":
                     orig_vp = sz
+                    continue
                 elif name == ".__sseocb_i.vP":
                     comp_vp = sz
 
+                total_size += sz
                 idx_sz = line.find(parts[1], len(parts[0]))
                 end_sz = idx_sz + len(parts[1])
                 prefix = line[:end_sz]
