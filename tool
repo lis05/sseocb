@@ -1,1 +1,1 @@
-../target/debug/tool
+target/release/tool

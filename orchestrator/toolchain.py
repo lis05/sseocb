@@ -43,11 +43,12 @@ class Toolchain:
         return Path(found)
 
     def build_host_crates(self) -> None:
-        """Build crates/tool, crates/rv32-isa, and crates/sim before running anything."""
+        """Build crates/tool, crates/rv32-isa, and crates/sim in release mode before running anything."""
         self.run(
             [
                 self.cargo,
                 "build",
+                "--release",
                 "--manifest-path",
                 str(self.repo_root / "Cargo.toml"),
                 "-p",
@@ -61,7 +62,7 @@ class Toolchain:
         )
 
     def _get_target_bin(self, crate_name: str) -> Path:
-        bin_path = self.repo_root / "target" / "debug" / crate_name
+        bin_path = self.repo_root / "target" / "release" / crate_name
         if not bin_path.exists():
             self.build_host_crates()
         if not bin_path.exists():

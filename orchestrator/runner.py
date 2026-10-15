@@ -69,7 +69,7 @@ def run_sim(
     bin_path: Path,
     entry: Optional[str] = None,
     elf_path: Optional[Path] = None,
-    max_cycles: int = 100_000_000,
+    max_cycles: int = 0,
     debug: bool = False,
     stream_output: bool = False,
 ) -> SimResult:

@@ -30,6 +30,6 @@ class Config:
     print_output: bool = False
     debug: bool = False
     expected_output: Optional[Path] = None
-    max_cycles: int = 100_000_000
+    max_cycles: int = 0
     log: bool = False
     size: bool = False

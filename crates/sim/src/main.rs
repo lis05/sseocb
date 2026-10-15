@@ -107,9 +107,7 @@ fn print_usage() {
     eprintln!("  --memory-ld <PATH>    Linker script defining MEMORY block (required)");
     eprintln!("  --entry <ADDR>        Entry address (default: FLASH origin from memory.ld)");
     eprintln!("  --elf <PATH>          ELF file containing symbols for debugging");
-    eprintln!(
-        "  --max-cycles <CYCLES> Maximum cycle limit (default: 10M / 10000000, 0 for unlimited)"
-    );
+    eprintln!("  --max-cycles <CYCLES> Maximum cycle limit (default: 0 for unlimited)");
     eprintln!("  --stats               Print execution stats (cycles executed before ebreak)");
     eprintln!();
     eprintln!(
@@ -117,7 +115,7 @@ fn print_usage() {
     );
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq)]
 struct RunConfig {
     memory_ld: Option<String>,
     max_cycles: u64,
@@ -125,19 +123,6 @@ struct RunConfig {
     elf_path: Option<String>,
     program_path: Option<String>,
     stats: bool,
-}
-
-impl Default for RunConfig {
-    fn default() -> Self {
-        Self {
-            memory_ld: None,
-            max_cycles: 10_000_000,
-            entry: None,
-            elf_path: None,
-            program_path: None,
-            stats: false,
-        }
-    }
 }
 
 fn parse_u64_with_suffix(s: &str) -> Result<u64, String> {

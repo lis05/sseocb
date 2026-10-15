@@ -152,8 +152,8 @@ def add_common_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-cycles",
         type=int,
-        default=100_000_000,
-        help="Max simulation cycle limit (default: 100M)",
+        default=0,
+        help="Max simulation cycle limit (default: 0, unlimited)",
     )
 
 
@@ -197,7 +197,7 @@ def build_config(args: argparse.Namespace, subcommand: str, target: str) -> Conf
         print_output=getattr(args, "print_output", False),
         debug=getattr(args, "debug", False),
         expected_output=getattr(args, "expected_output", None),
-        max_cycles=getattr(args, "max_cycles", 100_000_000),
+        max_cycles=getattr(args, "max_cycles", 0),
         log=getattr(args, "log", False),
         size=getattr(args, "size", False),
     )

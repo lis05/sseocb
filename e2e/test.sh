@@ -115,6 +115,7 @@ for test_dir in "$TESTS_DIR"/*; do
         --memory-ld "$MEMORY_LD"
         --output "$build_dir/artifacts"
         --decompressor "$DECOMPRESSOR"
+        --print-output
     )
 
     if [[ -f "$build_dir/native.o" ]]; then
@@ -131,6 +132,14 @@ for test_dir in "$TESTS_DIR"/*; do
 
     if [[ -f "$test_dir/native.ld" ]]; then
         cmd+=(--guest-native-ld "$test_dir/native.ld")
+    fi
+
+    if [[ -f "$test_dir/flags.txt" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" || "$line" =~ ^# ]] && continue
+            read -ra words <<< "$line"
+            cmd+=("${words[@]}")
+        done < "$test_dir/flags.txt"
     fi
 
     if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
