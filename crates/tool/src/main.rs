@@ -137,7 +137,7 @@ fn collect_sections_for_vp(
         }
 
         if let Ok(name) = section.name() {
-            script.push_str(&format!("        *({name})\n"));
+            script.push_str(&format!("        KEEP(*({name}))\n"));
         }
     }
     script.push_str(&format!(

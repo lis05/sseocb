@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 CLANG="${CLANG:-clang}"
+CLANG_GUEST="${CLANG_GUEST:-$REPO_ROOT/scripts/clang-guest}"
 LD_LLD="${LD_LLD:-ld.lld}"
 O_TOOL="$REPO_ROOT/o"
 
@@ -58,20 +59,29 @@ for test_dir in "$TESTS_DIR"/*; do
     for c_file in "$test_dir"/*.c; do
         [[ -f "$c_file" ]] || continue
         base_name="$(basename "$c_file" .c)"
-        "$CLANG" \
-            --target=riscv32 \
-            -march=rv32e \
-            -mabi=ilp32e \
-            -mno-relax \
-            -ffreestanding \
-            -nostdlib \
-            -fno-optimize-sibling-calls \
-            -O2 \
-            -I "$COMMON_DIR" \
-            -I "$test_dir" \
-            -c "$c_file" \
-            -o "$build_dir/${base_name}.o"
+        if [[ "$base_name" == "main" ]]; then
+            "$CLANG_GUEST" \
+                -I "$COMMON_DIR" \
+                -I "$test_dir" \
+                -c "$c_file" \
+                -o "$build_dir/${base_name}.o"
+        else
+            "$CLANG" \
+                --target=riscv32 \
+                -march=rv32e \
+                -mabi=ilp32e \
+                -mno-relax \
+                -ffreestanding \
+                -nostdlib \
+                -fno-optimize-sibling-calls \
+                -O2 \
+                -I "$COMMON_DIR" \
+                -I "$test_dir" \
+                -c "$c_file" \
+                -o "$build_dir/${base_name}.o"
+        fi
     done
+
 
     if [[ ! -f "$build_dir/main.o" ]]; then
         echo "Error: missing main.o in $test_name" >&2

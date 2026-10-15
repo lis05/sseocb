@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 CLANG="${CLANG:-clang}"
+CLANG_GUEST="${CLANG_GUEST:-$REPO_ROOT/scripts/clang-guest}"
 O_TOOL="$REPO_ROOT/o"
 
 MODE_BENCH=0
@@ -71,20 +72,13 @@ mkdir -p artifacts
 
 # 1. Compile main.c as rv32e (guest code)
 if [[ $LOG -eq 1 ]]; then
-    echo "+ $CLANG --target=riscv32 -march=rv32e -mabi=ilp32e -mno-relax -ffreestanding -nostdlib -O2 -I $SCRIPT_DIR -c main.c -o artifacts/guest.o"
+    echo "+ $CLANG_GUEST -I $SCRIPT_DIR -c main.c -o artifacts/guest.o"
 fi
-"$CLANG" \
-    --target=riscv32 \
-    -march=rv32e \
-    -mabi=ilp32e \
-    -mno-relax \
-    -ffreestanding \
-    -nostdlib \
-    -fno-optimize-sibling-calls \
-    -O2 \
+"$CLANG_GUEST" \
     -I "$SCRIPT_DIR" \
     -c main.c \
     -o artifacts/guest.o
+
 
 # 2. Compile native.c as rv32e (native code)
 if [[ $LOG -eq 1 ]]; then

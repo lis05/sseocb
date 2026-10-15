@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CLANG="${CLANG:-$(command -v clang || true)}"
+if [[ -z "$CLANG" ]]; then
+    echo "Error: 'clang' not found in PATH" >&2
+    exit 1
+fi
+
+BASE_FLAGS=(
+    --target=riscv32
+    -march=rv32e
+    -mabi=ilp32e
+    -mno-relax
+    -ffreestanding
+    -nostdlib
+    -fno-optimize-sibling-calls
+    -ffunction-sections
+    -O2
+)
+
+# Automatically default to compile-only (-c) unless the user passed a specific mode flag
+HAS_COMPILE_OR_SPECIAL=0
+for arg in "$@"; do
+    case "$arg" in
+        -c|-S|-E|-M|-MM|--version|-v|-###)
+            HAS_COMPILE_OR_SPECIAL=1
+            break
+            ;;
+    esac
+done
+
+if [[ $HAS_COMPILE_OR_SPECIAL -eq 0 ]]; then
+    BASE_FLAGS+=(-c)
+fi
+
+exec "$CLANG" "${BASE_FLAGS[@]}" "$@"

@@ -275,6 +275,14 @@ def print_size_report(toolchain: Toolchain, elf_path: Path) -> None:
 
     print("\n".join(new_lines))
 
+    if orig_vp is not None and comp_vp is not None:
+        if orig_vp > 0:
+            pct = (comp_vp / orig_vp) * 100.0
+            print(f"\ncompressed vP is {pct:.1f}% of original vP ({comp_vp} / {orig_vp} bytes)")
+        else:
+            print(f"\ncompressed vP is {comp_vp} bytes (original vP is {orig_vp} bytes)")
+
+
 def print_sseocb_size_report(
     toolchain: Toolchain,
     sseocb_elf: Path,

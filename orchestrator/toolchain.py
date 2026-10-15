@@ -28,6 +28,7 @@ class Toolchain:
         self.llvm_readelf = self._find_tool("llvm-readelf")
         self.llvm_size = self._find_tool("llvm-size")
         self.cargo = self._find_tool("cargo")
+        self.clang_guest = self.repo_root / "scripts" / "clang-guest"
 
         if build_crates:
             self.build_host_crates()

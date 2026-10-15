@@ -79,7 +79,9 @@ def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
         out / "guest-compiled.o",
         config,
         toolchain,
+        is_guest=True,
     )
+
 
     # 1. Pre-pass
     toolchain.run([

@@ -23,28 +23,40 @@ def compile_rv32e_if_source(
     out_obj: Path,
     config: Config,
     toolchain: Toolchain,
+    is_guest: bool = False,
 ) -> Path:
     if src_or_obj.suffix.lower() == ".c":
         inc_args = ["-I", str(src_or_obj.parent.resolve())]
         for inc in config.include_dirs:
             inc_args.extend(["-I", str(Path(inc).resolve())])
-        cmd = [
-            toolchain.clang,
-            "--target=riscv32",
-            "-march=rv32e",
-            "-mabi=ilp32e",
-            "-mno-relax",
-            "-ffreestanding",
-            "-nostdlib",
-            "-fno-optimize-sibling-calls",
-            "-O2",
-            *inc_args,
-            *config.c_flags,
-            "-c",
-            src_or_obj.resolve(),
-            "-o",
-            out_obj.resolve(),
-        ]
+        if is_guest:
+            cmd = [
+                toolchain.clang_guest,
+                *inc_args,
+                *config.c_flags,
+                "-c",
+                src_or_obj.resolve(),
+                "-o",
+                out_obj.resolve(),
+            ]
+        else:
+            cmd = [
+                toolchain.clang,
+                "--target=riscv32",
+                "-march=rv32e",
+                "-mabi=ilp32e",
+                "-mno-relax",
+                "-ffreestanding",
+                "-nostdlib",
+                "-fno-optimize-sibling-calls",
+                "-O2",
+                *inc_args,
+                *config.c_flags,
+                "-c",
+                src_or_obj.resolve(),
+                "-o",
+                out_obj.resolve(),
+            ]
         toolchain.run(cmd)
         return out_obj
     return src_or_obj
@@ -59,7 +71,9 @@ def build_native(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
         out / "guest-compiled.o",
         config,
         toolchain,
+        is_guest=True,
     )
+
 
     # 1. Promote guest.o to rv32e
     guest_promoted = out / "guest-promoted-rv32e.o"
