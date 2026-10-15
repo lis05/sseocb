@@ -2,6 +2,12 @@
 Software Side Executor Of Compressed Binaries is a project with a purpose to allow
 execution of programs which are larger than the target device's Flash memory size.
 
+## Demo
+In this demo, uLisp Zero interpreter is run natively and by using SSEOCB. Native
+(uncompressed) program fails to link as it is too large (~23 KiB). With SSEOCB, it
+just barely fits in the 16 KiB Flash, outputting a star (see [`demos/ulisp`](demos/ulisp)).
+![uLisp interpreter running via SSEOCB](demos-ulisp.png)
+
 ## Background
 Small microcontrollers have just a few kilobytes of memory, which limits how large the
 programs flashed onto them can be. To run a bigger program, the chip has to be
@@ -17,7 +23,7 @@ chosen:
 - RV32I has 32 registers, and also has a reduced architecture RV32E which is similar
   to RV32I with the only difference being that it has 16 registers. This provides a
   great way to isolate guest code from interpreter code, as both can be compiled for
-  RV32E and then one simply "remaps" registers to the higher hextet.
+  RV32E and then one simply "remaps" registers to the upper half of the register file (x16–x31).
 
 - RV32I contains only about 40 instructions, and the handler for all of them is
   relatively small. Other architectures, which have many more instructions, would
@@ -48,7 +54,8 @@ callbacks later used like `register_callback(&callback)`). These symbols are the
 wrapped in uncompressed trampolines which have static addresses and can be safely
 passed to external code.
 
-The entire pipeline is illustrated in the architecture diagram below:
+The entire pipeline is illustrated in the architecture diagram below. Note that it is
+still somewhat simplified.
 
 ## Pipeline Architecture
 
@@ -61,24 +68,26 @@ SSEOCB consists of several crates in `crates/`:
 - `tool/` is the host-side tool used to prepare object files.
 - `rv32-isa/` contains parsing and encoding functions for RV32I instructions.
 
-The rest of the project is currently WIP and might change.
+In the root:
+- `orchestrator/` contains a python tool for building and running programs with
+  SSEOCB.
+- `e2e/` contains SSEOCB tests which include some simple programs and more complex
+  ones (such as Lisp/Basic interpreters)
+- `demos/` contains demos that showcase SSEOCB usage.
 
-## PoC
-The proof of concept for SSEOCB will be considered ready when the following becomes
-true:
-1. The system is implemented and can correctly execute compressed binaries using `sim/`
-2. An example guest program is provided such that `C + I < O` where `C` is the size of the compressed program, `I` is the size of the interpreter, and `O` is the size of the original, uncompressed guest program.
-3. The system has been successfully tested on a real device.
+## Milestones
+Completed:
+- The system is implemented and can correctly execute compressed binaries using
+  `sim/`
+- An example guest program is provided such that `C + I < O` where `C` is the size of the compressed program, `I` is the size of the interpreter, and `O` is the size of the original, uncompressed guest program. (demos/ulisp).
 
-> *Currently, none of the steps have been completed*
+In progress:
+- Testing and validating the system on real hardware.
+
+Other milestones are not published for the purpose of research.
 
 ## Benchmarks
 TODO, on real hardware with concrete examples.
 
-## Future work
-1. Remove limitations of the current implementation, such as uncompressed .rodata.
-2. Improve the tooling.
-3. Investigate compression strategies for different use cases.
-4. Investigate how performance can be improved by linking critical code as external
-   native code.
-5. Support other architectures (extensions of RV32, Arm?)
+## Known limitations
+Static symbols cannot be used as handlers. TBD.
