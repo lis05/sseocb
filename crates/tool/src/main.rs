@@ -246,8 +246,23 @@ fn run_promote(
         "rv32e" => (b"rv32i", b"rv32e"),
         _ => unreachable!(),
     };
-    if let Some(pos) = data.windows(from_str.len()).position(|w| w == from_str) {
-        data[pos..pos + to_str.len()].copy_from_slice(to_str);
+    if let Ok(file) = object::File::parse(&*data)
+        && let Some(sec) = file.section_by_name(".riscv.attributes")
+        && let Some((offset, size)) = sec.file_range()
+    {
+        let start = offset as usize;
+        let end = (offset + size) as usize;
+        if end <= data.len() {
+            let mut i = start;
+            while i + from_str.len() <= end {
+                if &data[i..i + from_str.len()] == from_str {
+                    data[i..i + to_str.len()].copy_from_slice(to_str);
+                    i += to_str.len();
+                } else {
+                    i += 1;
+                }
+            }
+        }
     }
 
     fs::write(output_path, data)?;
