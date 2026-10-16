@@ -360,9 +360,12 @@ pub mod bus {
                     region = region.with_write_proxy(|_addr, buf| {
                         use std::io::Write;
                         let mut out = std::io::stdout();
-                        out.write_all(buf)
-                            .and_then(|_| out.flush())
-                            .map_err(|_| super::region::Error::AddressViolation)
+                        if let Some(&byte) = buf.first() {
+                            out.write_all(&[byte])
+                                .and_then(|_| out.flush())
+                                .map_err(|_| super::region::Error::AddressViolation)?;
+                        }
+                        Ok(())
                     });
                 }
 
