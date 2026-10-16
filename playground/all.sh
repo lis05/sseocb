@@ -7,6 +7,7 @@ cd "$SCRIPT_DIR"
 
 CLANG="${CLANG:-clang}"
 CLANG_GUEST="${CLANG_GUEST:-$REPO_ROOT/scripts/clang-guest}"
+CLANG_NATIVE="${CLANG_NATIVE:-$REPO_ROOT/scripts/clang-native}"
 O_TOOL="$REPO_ROOT/o"
 
 MODE_BENCH=0
@@ -85,17 +86,9 @@ fi
 
 # 2. Compile native.c as rv32e (native code)
 if [[ $LOG -eq 1 ]]; then
-    echo "+ $CLANG --target=riscv32 -march=rv32e -mabi=ilp32e -mno-relax -ffreestanding -nostdlib -fno-optimize-sibling-calls -O2 -I $SCRIPT_DIR -c native.c -o artifacts/guest-native.o"
+    echo "+ $CLANG_NATIVE -I $SCRIPT_DIR -c native.c -o artifacts/guest-native.o"
 fi
-"$CLANG" \
-    --target=riscv32 \
-    -march=rv32e \
-    -mabi=ilp32e \
-    -mno-relax \
-    -ffreestanding \
-    -nostdlib \
-    -fno-optimize-sibling-calls \
-    -O2 \
+"$CLANG_NATIVE" \
     -I "$SCRIPT_DIR" \
     -c native.c \
     -o artifacts/guest-native.o

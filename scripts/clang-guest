@@ -16,6 +16,7 @@ BASE_FLAGS=(
     -nostdlib
     -fno-optimize-sibling-calls
     -ffunction-sections
+    -fno-addrsig
     -O2
 )
 
@@ -34,4 +35,27 @@ if [[ $HAS_COMPILE_OR_SPECIAL -eq 0 ]]; then
     BASE_FLAGS+=(-c)
 fi
 
-exec "$CLANG" "${BASE_FLAGS[@]}" "$@"
+"$CLANG" "${BASE_FLAGS[@]}" "$@"
+
+OUT_OBJ=""
+for ((i = 1; i <= $#; i++)); do
+    arg="${!i}"
+    if [[ "$arg" == "-o" ]]; then
+        next=$((i + 1))
+        OUT_OBJ="${!next:-}"
+        break
+    elif [[ -z "$OUT_OBJ" && "$arg" =~ \.(c|s|S)$ ]]; then
+        OUT_OBJ="$(basename "${arg%.*}").o"
+    fi
+done
+
+if [[ -n "$OUT_OBJ" && -f "$OUT_OBJ" ]]; then
+    REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    for candidate in "$REPO_ROOT/target/release/tool" "$REPO_ROOT/target/debug/tool" "$(command -v tool || true)"; do
+        if [[ -n "$candidate" && -x "$candidate" ]]; then
+            exec "$candidate" globalize "$OUT_OBJ"
+        fi
+    done
+    echo "Error: 'tool' binary not found to globalize $OUT_OBJ" >&2
+    exit 1
+fi

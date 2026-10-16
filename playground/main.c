@@ -1,6 +1,6 @@
 #include "native.h"
 
-unsigned int udivmod(unsigned int n, unsigned int d, unsigned int *rem) {
+static unsigned int udivmod(unsigned int n, unsigned int d, unsigned int *rem) {
     unsigned int q = 0;
     unsigned int r = 0;
     for (int i = 31; i >= 0; i--) {

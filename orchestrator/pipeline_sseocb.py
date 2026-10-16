@@ -95,9 +95,17 @@ def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
         is_guest=True,
     )
 
+    native_obj = None
+    if config.guest_native_obj:
+        native_obj = compile_rv32e_if_source(
+            config.guest_native_obj,
+            out / "guest-native-compiled.o",
+            config,
+            toolchain,
+        )
 
     # 1. Pre-pass
-    toolchain.run([
+    pre_cmd = [
         toolchain.tool,
         "pre",
         guest_obj,
@@ -108,7 +116,10 @@ def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
         f"0x{config.vpsize:x}",
         "--entry",
         config.entry,
-    ])
+    ]
+    if native_obj:
+        pre_cmd.extend(["--native", str(native_obj)])
+    toolchain.run(pre_cmd)
 
     # 2. Promote guest object to rv32i
     guest_promoted = out / "guest-promoted.o"
@@ -122,13 +133,7 @@ def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
 
     # 3. Promote guest native object to rv32i if present
     native_promoted = None
-    if config.guest_native_obj:
-        native_obj = compile_rv32e_if_source(
-            config.guest_native_obj,
-            out / "guest-native-compiled.o",
-            config,
-            toolchain,
-        )
+    if native_obj:
         native_promoted = out / "guest-native-promoted.o"
         toolchain.run([
             toolchain.tool,

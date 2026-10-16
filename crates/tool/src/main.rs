@@ -6,10 +6,17 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
-fn get_addressable_symbols(file: &object::File) -> HashMap<String, usize> {
+/// Returns the guest functions that need a PLT trampoline, mapped to their slot
+/// offset (index * 4) in the PLT offset table. A function needs one if either:
+/// - its address is taken inside `guest.o` (absolute / PC-relative address relocations), or
+/// - `native.o` calls it directly (it's undefined in `native.o` but defined in `guest.o`).
+fn get_addressable_symbols(
+    guest_file: &object::File,
+    native_file: Option<&object::File>,
+) -> HashMap<String, usize> {
     let mut res = HashSet::new();
 
-    for section in file.sections() {
+    for section in guest_file.sections() {
         for (_offset, reloc) in section.relocations() {
             if !match reloc.flags() {
                 object::RelocationFlags::Elf { r_type } => {
@@ -27,7 +34,7 @@ fn get_addressable_symbols(file: &object::File) -> HashMap<String, usize> {
                 continue;
             }
             if let object::RelocationTarget::Symbol(index) = reloc.target()
-                && let Ok(sym) = file.symbol_by_index(index)
+                && let Ok(sym) = guest_file.symbol_by_index(index)
                 && !sym.is_undefined()
                 && sym.kind() == object::SymbolKind::Text
                 && let Ok(name) = sym.name()
@@ -37,15 +44,31 @@ fn get_addressable_symbols(file: &object::File) -> HashMap<String, usize> {
         }
     }
 
+    if let Some(native) = native_file {
+        let guest_text_symbols: HashSet<&str> = guest_file
+            .symbols()
+            .filter(|sym| !sym.is_undefined() && sym.kind() == object::SymbolKind::Text)
+            .filter_map(|sym| sym.name().ok())
+            .collect();
+
+        for sym in native.symbols() {
+            if sym.is_undefined()
+                && let Ok(name) = sym.name()
+                && guest_text_symbols.contains(name)
+            {
+                res.insert(name.to_string());
+            }
+        }
+    }
+
     let mut sorted_symbols: Vec<String> = res.into_iter().collect();
     sorted_symbols.sort();
 
-    let mut map = HashMap::new();
-    for (i, val) in sorted_symbols.into_iter().enumerate() {
-        map.insert(val, i * 4);
-    }
-
-    map
+    sorted_symbols
+        .into_iter()
+        .enumerate()
+        .map(|(i, val)| (val, i * 4))
+        .collect()
 }
 
 fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std::io::Result<()> {
@@ -66,7 +89,6 @@ fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std
             j __sseocb_i_plt_call\n\n"
         ));
 
-        // TODO: This does NOT work with static symbols.
         linker.push_str(&format!("__wrap_{sym} = {plt_sym};\n"));
         wrap.push_str(&format!("--wrap={sym}\n"));
     }
@@ -159,6 +181,7 @@ fn collect_sections_for_vp(
 
 fn run_pre(
     input_file: &str,
+    native_file_path: Option<&str>,
     output_dir: &str,
     vpbase: u64,
     vpsize: u64,
@@ -167,12 +190,18 @@ fn run_pre(
     let data = fs::read(input_file)?;
     let file = object::File::parse(&*data)?;
 
+    let native_data = native_file_path.map(fs::read).transpose()?;
+    let native_file = native_data
+        .as_deref()
+        .map(object::File::parse)
+        .transpose()?;
+
     println!("Sections:");
     for section in file.sections() {
         println!("  {}", section.name()?);
     }
 
-    let addressable_symbols = get_addressable_symbols(&file);
+    let addressable_symbols = get_addressable_symbols(&file, native_file.as_ref());
     println!("Addressable ({} symbols):", addressable_symbols.len());
     let mut sorted_symbols: Vec<(&String, &usize)> = addressable_symbols.iter().collect();
     sorted_symbols.sort_by_key(|(_, num)| *num);
@@ -578,12 +607,89 @@ fn run_compress_graemi(input_path: &str, output_path: &str) -> Result<(), Box<dy
     Ok(())
 }
 
+/// Promotes every static (`STB_LOCAL`) function in an ELF object to a global
+/// symbol named `__sseocb_s_<file>_<name>` by parsing the object with
+/// `object::build::elf::Builder` and writing out a fresh object file.
+///
+/// This lets `ld --wrap` intercept references to static functions (which it
+/// otherwise ignores), while the file-name prefix prevents identically named
+/// statics from different translation units from colliding.
+fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
+    let data = fs::read(file_path)?;
+    let mut builder = object::build::elf::Builder::read(&*data)?;
+
+    // Determine the source filename from the STT_FILE symbol (e.g. "main.c"),
+    // falling back to the object file path.
+    let source_name = builder
+        .symbols
+        .iter()
+        .find(|s| s.st_type() == elf::STT_FILE)
+        .and_then(|s| std::str::from_utf8(&s.name).ok())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(file_path);
+    let base_name = Path::new(source_name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("obj");
+    let sanitized: String = base_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let prefix = format!("__sseocb_s_{sanitized}_");
+
+    // Promote every named, defined, local function symbol to global.
+    // `Builder::write` automatically reorders STB_LOCAL before STB_GLOBAL,
+    // updates `.symtab`'s `sh_info`, rebuilds `.strtab`, and remaps relocations.
+    let mut modified = false;
+    for sym in builder.symbols.iter_mut() {
+        let Ok(name) = std::str::from_utf8(&sym.name) else {
+            continue;
+        };
+        if sym.st_bind() == elf::STB_LOCAL
+            && sym.st_type() == elf::STT_FUNC
+            && sym.section.is_some()
+            && !name.is_empty()
+            && !name.starts_with("__sseocb_s_")
+        {
+            sym.name = format!("{prefix}{name}").into_bytes().into();
+            sym.set_st_info(elf::STB_GLOBAL, elf::STT_FUNC);
+            modified = true;
+        }
+    }
+
+    if !modified {
+        return Ok(());
+    }
+
+    // Clang objects often share a single .strtab for both symbol and section names.
+    // `object::build::elf::Builder::write` requires a dedicated SectionString
+    // section (.shstrtab), so ensure one exists if it was omitted.
+    let has_shstrtab = builder
+        .sections
+        .iter()
+        .any(|s| matches!(s.data, object::build::elf::SectionData::SectionString));
+    if !has_shstrtab {
+        let shstrtab = builder.sections.add();
+        shstrtab.name = (&b".shstrtab"[..]).into();
+        shstrtab.sh_type = elf::SHT_STRTAB;
+        shstrtab.data = object::build::elf::SectionData::SectionString;
+    }
+
+    let mut out = Vec::with_capacity(data.len());
+    builder.write(&mut out)?;
+    fs::write(file_path, &out)?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: tool <pre|post|promote|remap|compress-blaris|compress-graemi> <args...>");
         eprintln!(
-            "  tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
+            "Usage: tool <pre|post|promote|remap|globalize|compress-blaris|compress-graemi> <args...>"
+        );
+        eprintln!("  tool globalize <input.o>");
+        eprintln!(
+            "  tool pre <input.o> <output_dir> [--native <native.o>] [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
         );
         eprintln!("  tool post <linked_o> <output_dir>");
         eprintln!("  tool promote <input.o> <output.o> [rv32i|rv32e]");
@@ -594,6 +700,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     match args[1].as_str() {
+        "globalize" => {
+            if args.len() < 3 {
+                eprintln!("Usage: tool globalize <input.o>");
+                std::process::exit(1);
+            }
+            run_globalize(&args[2])?;
+        }
         "compress-blaris" => {
             if args.len() < 4 {
                 eprintln!("Usage: tool compress-blaris <input.bin> <output.bin>");
@@ -626,11 +739,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         "pre" => {
             if args.len() < 4 {
                 eprintln!(
-                    "Usage: tool pre <input.o> <output_dir> [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
+                    "Usage: tool pre <input.o> <output_dir> [--native <native.o>] [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
                 );
                 std::process::exit(1);
             }
 
+            let mut native_file: Option<String> = None;
             let mut vpbase = 0xFFF0_0000u64; // Default: 4 GiB - 1 MiB
             let mut vpsize = 0x0010_0000u64; // Default: 1 MiB
             let mut entry = "_start".to_string(); // Default: _start
@@ -638,6 +752,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut i = 4;
             while i < args.len() {
                 match args[i].as_str() {
+                    "--native" | "--guest-native" => {
+                        i += 1;
+                        if i >= args.len() {
+                            eprintln!("Missing value for --native");
+                            std::process::exit(1);
+                        }
+                        native_file = Some(args[i].clone());
+                    }
                     "--vpbase" | "--vp-base" => {
                         i += 1;
                         if i >= args.len() {
@@ -670,7 +792,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 i += 1;
             }
 
-            run_pre(&args[2], &args[3], vpbase, vpsize, &entry)?;
+            run_pre(
+                &args[2],
+                native_file.as_deref(),
+                &args[3],
+                vpbase,
+                vpsize,
+                &entry,
+            )?;
         }
         "post" => {
             if args.len() < 4 {
@@ -681,7 +810,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         other => {
             eprintln!(
-                "Unknown command: '{}'. Expected 'pre', 'post', 'promote', 'remap', 'compress-blaris', or 'compress-graemi'",
+                "Unknown command: '{}'. Expected 'pre', 'post', 'promote', 'remap', 'globalize', 'compress-blaris', or 'compress-graemi'",
                 other
             );
             std::process::exit(1);
@@ -929,5 +1058,106 @@ mod tests {
 
         let _ = fs::remove_file(in_path);
         let _ = fs::remove_file(out_path);
+    }
+
+    /// Builds a minimal 32-bit little-endian RISC-V ELF relocatable object
+    /// using `object::build::elf::Builder` with a `.text` section and custom symbols.
+    fn build_test_elf(
+        file_name: Option<&[u8]>,
+        defined_funcs: &[(&[u8], bool)],
+        undefined_syms: &[&[u8]],
+    ) -> Vec<u8> {
+        use object::build::elf::SectionData;
+
+        let mut builder = object::build::elf::Builder::new(object::Endianness::Little, false);
+        builder.header.e_type = elf::ET_REL;
+        builder.header.e_machine = elf::EM_RISCV;
+
+        let shstrtab = builder.sections.add();
+        shstrtab.name = (&b".shstrtab"[..]).into();
+        shstrtab.sh_type = elf::SHT_STRTAB;
+        shstrtab.data = SectionData::SectionString;
+
+        let strtab = builder.sections.add();
+        strtab.name = (&b".strtab"[..]).into();
+        strtab.sh_type = elf::SHT_STRTAB;
+        strtab.data = SectionData::String;
+        let strtab_id = strtab.id();
+
+        let symtab = builder.sections.add();
+        symtab.name = (&b".symtab"[..]).into();
+        symtab.sh_type = elf::SHT_SYMTAB;
+        symtab.sh_link_section = Some(strtab_id);
+        symtab.data = SectionData::Symbol;
+
+        let text = builder.sections.add();
+        text.name = (&b".text"[..]).into();
+        text.sh_type = elf::SHT_PROGBITS;
+        text.sh_flags = elf::SHF_ALLOC | elf::SHF_EXECINSTR;
+        text.sh_addralign = 4;
+        text.data =
+            SectionData::Data((&[0x13u8, 0x00, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00][..]).into());
+        let text_id = text.id();
+
+        if let Some(fname) = file_name {
+            let s = builder.symbols.add();
+            s.name = fname.into();
+            s.set_st_info(elf::STB_LOCAL, elf::STT_FILE);
+            s.st_shndx = elf::SHN_ABS;
+        }
+
+        for &(name, is_global) in defined_funcs {
+            let s = builder.symbols.add();
+            s.name = name.into();
+            let bind = if is_global {
+                elf::STB_GLOBAL
+            } else {
+                elf::STB_LOCAL
+            };
+            s.set_st_info(bind, elf::STT_FUNC);
+            s.section = Some(text_id);
+        }
+
+        for &name in undefined_syms {
+            let s = builder.symbols.add();
+            s.name = name.into();
+            s.set_st_info(elf::STB_GLOBAL, elf::STT_NOTYPE);
+        }
+
+        let mut buf = Vec::new();
+        builder.write(&mut buf).unwrap();
+        buf
+    }
+
+    #[test]
+    fn test_globalize_elf() {
+        let test_o = std::env::temp_dir().join("test_globalize_unit.o");
+        let elf_bytes = build_test_elf(Some(b"test.c"), &[(b"foo", false), (b"bar", true)], &[]);
+
+        fs::write(&test_o, elf_bytes).unwrap();
+        run_globalize(test_o.to_str().unwrap()).unwrap();
+
+        let updated = fs::read(&test_o).unwrap();
+        let parsed = object::File::parse(&*updated).unwrap();
+        let sym = parsed
+            .symbols()
+            .find(|s| s.name() == Ok("__sseocb_s_test_c_foo"))
+            .expect("Renamed symbol not found");
+        assert!(sym.is_global());
+
+        let _ = fs::remove_file(test_o);
+    }
+
+    #[test]
+    fn test_get_addressable_symbols_with_native() {
+        let guest_elf = build_test_elf(None, &[(b"guest_func", true)], &[]);
+        let native_elf = build_test_elf(None, &[], &[b"guest_func", b"unrelated_func"]);
+
+        let parsed_guest = object::File::parse(&*guest_elf).unwrap();
+        let parsed_native = object::File::parse(&*native_elf).unwrap();
+
+        let addressable = get_addressable_symbols(&parsed_guest, Some(&parsed_native));
+        assert!(addressable.contains_key("guest_func"));
+        assert!(!addressable.contains_key("unrelated_func"));
     }
 }
