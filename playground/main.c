@@ -1,6 +1,6 @@
 #include "native.h"
 
-static unsigned int udivmod(unsigned int n, unsigned int d, unsigned int *rem) {
+unsigned int udivmod(unsigned int n, unsigned int d, unsigned int *rem) {
     unsigned int q = 0;
     unsigned int r = 0;
     for (int i = 31; i >= 0; i--) {
@@ -16,7 +16,7 @@ static unsigned int udivmod(unsigned int n, unsigned int d, unsigned int *rem) {
     return q;
 }
 
-static int is_prime(unsigned int n) {
+int is_prime(unsigned int n) {
     if (n < 2) return 0;
     for (unsigned int d = 2; ; d++) {
         unsigned int rem = 0;
@@ -31,8 +31,14 @@ static int is_prime(unsigned int n) {
     return 1;
 }
 
+volatile void *ptr1 = (void*)&udivmod;
+
 void _start(void) {
+    __asm__(".globl __before_print");
+    __asm__("__before_print:");
     uart_puts("--- First 10 Primes ---\n");
+    __asm__(".globl __after_print");
+    __asm__("__after_print:");
 
     int count = 0;
     unsigned int num = 2;

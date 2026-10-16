@@ -8,6 +8,20 @@ pub mod int;
 use decompress::{ChosenDecompressor, Decompressor};
 use rv32_isa::{Instruction, parse};
 
+#[macro_export]
+macro_rules! label {
+    ($name:ident) => {
+        #[allow(named_asm_labels)]
+        unsafe {
+            ::core::arch::asm!(
+                concat!(".globl __sseocb_m_", stringify!($name)),
+                concat!("__sseocb_m_", stringify!($name), ":"),
+                options(nostack, preserves_flags)
+            );
+        }
+    };
+}
+
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     asm::emit_ebreak();
@@ -37,17 +51,22 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             asm::emit_ebreak();
             loop {}
         };
+
+        label!(match);
         match instr {
             Instruction::lui { rd, imm } => {
+                label!(lui);
                 bridge::write_guest_reg(rd, imm as u32);
                 vPC = vPC.wrapping_add(4);
             }
             Instruction::auipc { rd, imm } => {
+                label!(auipc);
                 let guest_pc = int::g_vpbase().wrapping_add(vPC);
                 bridge::write_guest_reg(rd, guest_pc.wrapping_add_signed(imm));
                 vPC = vPC.wrapping_add(4);
             }
             Instruction::jal { rd, imm } => {
+                label!(jal);
                 let link_addr = int::g_vpbase().wrapping_add(vPC).wrapping_add(4);
                 bridge::write_guest_reg(rd, link_addr);
 
@@ -62,6 +81,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 }
             }
             Instruction::jalr { rd, rs1, imm } => {
+                label!(jalr);
                 let rs1_addr = bridge::read_guest_reg(rs1);
                 let target_pc = rs1_addr.wrapping_add_signed(imm) & (!1);
 
@@ -86,6 +106,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             | Instruction::bge { rs1, rs2, imm }
             | Instruction::bltu { rs1, rs2, imm }
             | Instruction::bgeu { rs1, rs2, imm } => {
+                label!(branch);
                 let r1 = bridge::read_guest_reg(rs1);
                 let r2 = bridge::read_guest_reg(rs2);
                 let cond = match instr {
@@ -117,6 +138,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             | Instruction::lw { rd, rs1, imm }
             | Instruction::lbu { rd, rs1, imm }
             | Instruction::lhu { rd, rs1, imm } => {
+                label!(load);
                 let addr = bridge::read_guest_reg(rs1).wrapping_add_signed(imm) as usize;
                 if is_addr_in_vp(addr as u32) {
                     // This must never happen. TODO: disable such checks with a feature.
@@ -141,6 +163,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             Instruction::sb { rs1, rs2, imm }
             | Instruction::sh { rs1, rs2, imm }
             | Instruction::sw { rs1, rs2, imm } => {
+                label!(store);
                 let addr = bridge::read_guest_reg(rs1).wrapping_add_signed(imm) as usize;
                 if is_addr_in_vp(addr as u32) {
                     // This must never happen. TODO: disable such checks with a feature.
@@ -166,6 +189,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             | Instruction::xori { rd, rs1, imm }
             | Instruction::ori { rd, rs1, imm }
             | Instruction::andi { rd, rs1, imm } => {
+                label!(imm1);
                 let rs1 = bridge::read_guest_reg(rs1);
                 let value = match instr {
                     Instruction::addi { .. } => rs1.wrapping_add_signed(imm),
@@ -182,6 +206,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             Instruction::slli { rd, rs1, shamt }
             | Instruction::srli { rd, rs1, shamt }
             | Instruction::srai { rd, rs1, shamt } => {
+                label!(imm2);
                 let rs1 = bridge::read_guest_reg(rs1);
                 let value = match instr {
                     Instruction::slli { .. } => rs1 << shamt,
@@ -202,6 +227,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             | Instruction::sra { rd, rs1, rs2 }
             | Instruction::or { rd, rs1, rs2 }
             | Instruction::and { rd, rs1, rs2 } => {
+                label!(reg);
                 let rs1 = bridge::read_guest_reg(rs1);
                 let rs2 = bridge::read_guest_reg(rs2);
                 let shamt = rs2 & 0x1f;

@@ -147,84 +147,84 @@ SECTIONS
 {{
     .rodata : {{
         . = ALIGN(4);
-        *(.rodata .rodata.*)
+        KEEP(*(.rodata .rodata.* .srodata .srodata.*))
         . = ALIGN(4);
     }} > FLASH
 
     .__sseocb_g.text.plt : {{
         . = ALIGN(4);
-        *(.__sseocb_g.text.plt)
+        KEEP(*(.__sseocb_g.text.plt))
         . = ALIGN(4);
     }} > FLASH
 
     .data : {{
         . = ALIGN(4);
-        _sdata = .;
-        *(.data .data.*)
+        KEEP(*(.data .data.* .sdata .sdata.*))
         . = ALIGN(4);
-        _edata = .;
     }} > RAM AT > FLASH
+    _sdata = ADDR(.data);
+    _edata = ADDR(.data) + SIZEOF(.data);
     _sidata = LOADADDR(.data);
 
     .bss : {{
         . = ALIGN(4);
-        _sbss = .;
-        *(.bss .bss.*)
-        *(COMMON)
+        KEEP(*(.bss .bss.* .sbss .sbss.*))
+        KEEP(*(COMMON))
         . = ALIGN(4);
-        _ebss = .;
     }} > RAM
+    _sbss = ADDR(.bss);
+    _ebss = ADDR(.bss) + SIZEOF(.bss);
 
     .__sseocb_g.text.native : {{
         . = ALIGN(4);
-        *guest-native-promoted.o(.text .text.*)
+        KEEP(*guest-native-promoted.o(.text .text.*))
         . = ALIGN(4);
     }} > FLASH
 
     .__sseocb_i.decompressor : {{
         . = ALIGN(4);
-        *(.__sseocb_i.decompressor .__sseocb_i.decompressor.*)
+        KEEP(*(.__sseocb_i.decompressor .__sseocb_i.decompressor.*))
         . = ALIGN(4);
     }} > FLASH
 
     .__sseocb_i.text : {{
         . = ALIGN(4);
-        *(.__sseocb_i.text .__sseocb_i.text.*)
+        KEEP(*(.__sseocb_i.text .__sseocb_i.text.*))
         . = ALIGN(4);
     }} > FLASH
 
     .__sseocb_i.bridge : {{
         . = ALIGN(4);
-        *(__sseocb_i.bridge)
+        KEEP(*(__sseocb_i.bridge))
         . = ALIGN(4);
     }} > FLASH
 
     .__sseocb_i.rodata : {{
         . = ALIGN(4);
-        *(.__sseocb_i.rodata .__sseocb_i.rodata.*)
+        KEEP(*(.__sseocb_i.rodata .__sseocb_i.rodata.*))
         . = ALIGN(4);
     }} > FLASH
 
     .__sseocb_i.data : {{
         . = ALIGN(4);
-        _i_sdata = .;
-        *(.__sseocb_i.data .__sseocb_i.data.*)
+        KEEP(*(.__sseocb_i.data .__sseocb_i.data.*))
         . = ALIGN(4);
-        _i_edata = .;
     }} > RAM AT > FLASH
+    _i_sdata = ADDR(.__sseocb_i.data);
+    _i_edata = ADDR(.__sseocb_i.data) + SIZEOF(.__sseocb_i.data);
     _i_sidata = LOADADDR(.__sseocb_i.data);
 
     .__sseocb_i.bss : {{
         . = ALIGN(4);
-        _i_sbss = .;
-        *(.__sseocb_i.bss .__sseocb_i.bss.*)
+        KEEP(*(.__sseocb_i.bss .__sseocb_i.bss.*))
         . = ALIGN(4);
-        _i_ebss = .;
     }} > RAM
+    _i_sbss = ADDR(.__sseocb_i.bss);
+    _i_ebss = ADDR(.__sseocb_i.bss) + SIZEOF(.__sseocb_i.bss);
 
     .__sseocb_i.vP : {{
         . = ALIGN(4);
-        *(.__sseocb_i.vP)
+        KEEP(*(.__sseocb_i.vP))
         . = ALIGN(4);
     }} > FLASH
 
@@ -389,7 +389,6 @@ SECTIONS
 
     final_link_cmd.extend([
         "-Wl,-e,__sseocb_i_entry",
-        "-Wl,--gc-sections",
         f"-Wl,-Map={final_map.resolve()}",
         guest_promoted,
         trampolines_s,

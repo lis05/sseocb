@@ -161,34 +161,34 @@ SECTIONS
 {{
     .text : {{
         . = ALIGN(4);
-        *(.text.__sseocb_native_entry)
-        *(.text .text.*)
+        KEEP(*(.text.__sseocb_native_entry))
+        KEEP(*(.text .text.*))
         . = ALIGN(4);
     }} > FLASH
 
     .rodata : {{
         . = ALIGN(4);
-        *(.rodata .rodata.*)
+        KEEP(*(.rodata .rodata.* .srodata .srodata.*))
         . = ALIGN(4);
     }} > FLASH
 
     .data : {{
         . = ALIGN(4);
-        _sdata = .;
-        *(.data .data.*)
+        KEEP(*(.data .data.* .sdata .sdata.*))
         . = ALIGN(4);
-        _edata = .;
     }} > RAM AT > FLASH
+    _sdata = ADDR(.data);
+    _edata = ADDR(.data) + SIZEOF(.data);
     _sidata = LOADADDR(.data);
 
     .bss : {{
         . = ALIGN(4);
-        _sbss = .;
-        *(.bss .bss.*)
-        *(COMMON)
+        KEEP(*(.bss .bss.* .sbss .sbss.*))
+        KEEP(*(COMMON))
         . = ALIGN(4);
-        _ebss = .;
     }} > RAM
+    _sbss = ADDR(.bss);
+    _ebss = ADDR(.bss) + SIZEOF(.bss);
 
     _stack_top = ORIGIN(STACK) + LENGTH(STACK);
 }}
