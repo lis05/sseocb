@@ -22,7 +22,7 @@ macro_rules! native_call {
                 "jalr x1, {stub}", // x16
                 stub = in(reg) $crate::bridge::__sseocb_i_native_call,
                 in("x10") $target,
-                options(nostack)
+                out("x1") _,
             );
         }
     };
