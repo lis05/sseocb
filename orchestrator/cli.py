@@ -230,6 +230,19 @@ def print_size_report(toolchain: Toolchain, elf_path: Path) -> None:
     except ValueError:
         display_path = elf_path
 
+    # Identify NOBITS (RAM-only uninitialized data) sections to exclude them from Flash total
+    nobits_sections = set()
+    try:
+        res_elf = toolchain.run([toolchain.llvm_readelf, "-S", str(display_path)])
+        for l in res_elf.stdout.splitlines():
+            parts_elf = l.split()
+            if len(parts_elf) >= 3 and "NOBITS" in parts_elf:
+                idx = parts_elf.index("NOBITS")
+                if idx > 0:
+                    nobits_sections.add(parts_elf[idx - 1])
+    except Exception:
+        pass
+
     res = toolchain.run([toolchain.llvm_size, "-A", str(display_path)])
     lines = res.stdout.splitlines()
     if len(lines) < 2:
@@ -269,7 +282,16 @@ def print_size_report(toolchain: Toolchain, elf_path: Path) -> None:
                 elif name == ".__sseocb_i.vP":
                     comp_vp = sz
 
-                total_size += sz
+                is_nobits = (
+                    name in nobits_sections
+                    or name == ".bss"
+                    or name.startswith(".bss.")
+                    or name.startswith(".sbss")
+                    or name == ".__sseocb_i.bss"
+                )
+                if not is_nobits:
+                    total_size += sz
+
                 idx_sz = line.find(parts[1], len(parts[0]))
                 end_sz = idx_sz + len(parts[1])
                 prefix = line[:end_sz]
