@@ -30,6 +30,7 @@ class Toolchain:
         self.cargo = self._find_tool("cargo")
         self.clang_guest = self.repo_root / "scripts" / "clang-guest"
 
+        self._host_crates_built = False
         if build_crates:
             self.build_host_crates()
 
@@ -42,8 +43,10 @@ class Toolchain:
             raise ToolchainError(f"Required tool '{name}' not found in PATH")
         return Path(found)
 
-    def build_host_crates(self) -> None:
+    def build_host_crates(self, force: bool = False) -> None:
         """Build crates/tool, crates/rv32-isa, and crates/sim in release mode before running anything."""
+        if self._host_crates_built and not force:
+            return
         self.run(
             [
                 self.cargo,
@@ -60,11 +63,11 @@ class Toolchain:
             ],
             cwd=self.repo_root,
         )
+        self._host_crates_built = True
 
     def _get_target_bin(self, crate_name: str) -> Path:
         bin_path = self.repo_root / "target" / "release" / crate_name
-        if not bin_path.exists():
-            self.build_host_crates()
+        self.build_host_crates()
         if not bin_path.exists():
             raise ToolchainError(f"Failed to find or build '{crate_name}' at {bin_path}")
         return bin_path
@@ -82,24 +85,22 @@ class Toolchain:
         )
         stamp_file = int_a.parent / ".decompressor"
         dec_norm = decompressor.lower()
-        needs_build = not int_a.exists() or (
-            not stamp_file.exists() or stamp_file.read_text().strip() != dec_norm
-        )
-        if needs_build:
-            if dec_norm == "noop":
-                feature_args = ["--no-default-features", "--features", "noop-dec"]
-            elif dec_norm == "blaris":
-                feature_args = ["--no-default-features", "--features", "blaris-dec"]
-            elif dec_norm == "graemi":
-                feature_args = ["--no-default-features", "--features", "graemi-dec"]
-            else:
-                feature_args = ["--no-default-features", "--features", f"{dec_norm}-dec"]
 
-            env = os.environ.copy()
-            existing_rustflags = env.get("RUSTFLAGS", "")
-            env["RUSTFLAGS"] = f"{existing_rustflags} -Zunstable-options -Cpanic=immediate-abort".strip()
+        if dec_norm == "noop":
+            feature_args = ["--no-default-features", "--features", "noop-dec"]
+        elif dec_norm == "blaris":
+            feature_args = ["--no-default-features", "--features", "blaris-dec"]
+        elif dec_norm == "graemi":
+            feature_args = ["--no-default-features", "--features", "graemi-dec"]
+        else:
+            feature_args = ["--no-default-features", "--features", f"{dec_norm}-dec"]
 
-            self.run([
+        env = os.environ.copy()
+        existing_rustflags = env.get("RUSTFLAGS", "")
+        env["RUSTFLAGS"] = f"{existing_rustflags} -Zunstable-options -Cpanic=immediate-abort".strip()
+
+        self.run(
+            [
                 self.cargo,
                 "+nightly",
                 "build",
@@ -111,9 +112,12 @@ class Toolchain:
                 "-Z",
                 "build-std=core,compiler_builtins",
                 *feature_args,
-            ], cwd=self.repo_root, env=env)
-            int_a.parent.mkdir(parents=True, exist_ok=True)
-            stamp_file.write_text(dec_norm)
+            ],
+            cwd=self.repo_root,
+            env=env,
+        )
+        int_a.parent.mkdir(parents=True, exist_ok=True)
+        stamp_file.write_text(dec_norm)
 
         if not int_a.exists():
             raise ToolchainError(f"Failed to find or build 'libint.a' at {int_a}")
