@@ -63,8 +63,16 @@ __sseocb_i_entry:
     # Initialize vPC
     la x25, __sseocb_g_entry
 
+    # Init x1 for safe return
+    la x1, 9f
+
     # Jump to main
     j __sseocb_i_main
+
+    9:
+    ebreak
+    10:
+    j 10b
 
 .globl __sseocb_i_read_guest_reg
 __sseocb_i_read_guest_reg:
