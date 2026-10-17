@@ -59,129 +59,198 @@ pub enum Instruction {
     ebreak,
 }
 
+pub mod constants;
+pub use constants::*;
+
+#[inline(always)]
+pub const fn opcode(raw: u32) -> u32 {
+    raw & mask::OPCODE
+}
+
+#[inline(always)]
+pub const fn funct3(raw: u32) -> u32 {
+    (raw >> shift::FUNCT3) & mask::FUNCT3
+}
+
+#[inline(always)]
+pub const fn funct7(raw: u32) -> u32 {
+    (raw >> shift::FUNCT7) & mask::FUNCT7
+}
+
+#[inline(always)]
+pub const fn rd(raw: u32) -> usize {
+    ((raw >> shift::RD) & mask::RD) as usize
+}
+
+#[inline(always)]
+pub const fn rs1(raw: u32) -> usize {
+    ((raw >> shift::RS1) & mask::RS1) as usize
+}
+
+#[inline(always)]
+pub const fn rs2(raw: u32) -> usize {
+    ((raw >> shift::RS2) & mask::RS2) as usize
+}
+
+#[inline(always)]
+pub const fn shamt(raw: u32) -> u32 {
+    (raw >> shift::SHAMT) & mask::SHAMT
+}
+
+#[inline(always)]
+pub const fn imm_u(raw: u32) -> i32 {
+    (raw & !0xFFF) as i32
+}
+
+#[inline(always)]
+pub const fn imm_j(raw: u32) -> i32 {
+    (((raw as i32) >> 31) << 20)
+        | (((raw >> 12) & 0xFF) << 12) as i32
+        | (((raw >> 20) & 0x1) << 11) as i32
+        | (((raw >> 21) & 0x3FF) << 1) as i32
+}
+
+#[inline(always)]
+pub const fn imm_i(raw: u32) -> i32 {
+    (raw as i32) >> 20
+}
+
+#[inline(always)]
+pub const fn imm_b(raw: u32) -> i32 {
+    (((raw as i32) >> 31) << 12)
+        | (((raw >> 7) & 0x1) << 11) as i32
+        | (((raw >> 25) & 0x3F) << 5) as i32
+        | (((raw >> 8) & 0xF) << 1) as i32
+}
+
+#[inline(always)]
+pub const fn imm_s(raw: u32) -> i32 {
+    ((raw as i32 >> 25) << 5) | (((raw >> 7) & 0x1F) as i32)
+}
+
 pub fn parse(raw: u32) -> Option<Instruction> {
-    let opcode = raw & 0x7F;
-    let funct3 = (raw >> 12) & 0x7;
-    let funct7 = (raw >> 25) & 0x7F;
-    let rd = ((raw >> 7) & 0x1F) as usize;
-    let rs1 = ((raw >> 15) & 0x1F) as usize;
-    let rs2 = ((raw >> 20) & 0x1F) as usize;
-    let shamt = (raw >> 20) & 0x1F;
+    let opcode = opcode(raw);
+    let funct3 = funct3(raw);
+    let funct7 = funct7(raw);
+    let rd = rd(raw);
+    let rs1 = rs1(raw);
+    let rs2 = rs2(raw);
+    let shamt = shamt(raw);
     // https://hoult.org/rv32i.pdf (page 14)
 
     match opcode {
         // LUI (U-type)
-        0b0110111 => {
-            let imm = (raw & !0xFFF) as i32;
+        opcode::LUI => {
+            let imm = imm_u(raw);
             Some(Instruction::lui { rd, imm })
         }
 
         // AUIPC (U-type)
-        0b0010111 => {
-            let imm = (raw & !0xFFF) as i32;
+        opcode::AUIPC => {
+            let imm = imm_u(raw);
             Some(Instruction::auipc { rd, imm })
         }
 
         // JAL (J-type)
         // imm[20] = raw[31], imm[19:12] = raw[19:12], imm[11] = raw[20], imm[10:1] = raw[30:21], imm[0] = 0
-        0b1101111 => {
-            let imm = (((raw as i32) >> 31) << 20)
-                | (((raw >> 12) & 0xFF) << 12) as i32
-                | (((raw >> 20) & 0x1) << 11) as i32
-                | (((raw >> 21) & 0x3FF) << 1) as i32;
+        opcode::JAL => {
+            let imm = imm_j(raw);
             Some(Instruction::jal { rd, imm })
         }
 
         // JALR (I-type)
-        0b1100111 => {
-            if funct3 != 0 {
+        opcode::JALR => {
+            if funct3 != funct3::JALR {
                 return None;
             }
-            let imm = (raw as i32) >> 20;
+            let imm = imm_i(raw);
             Some(Instruction::jalr { rd, rs1, imm })
         }
 
         // B-type
         // imm[12] = raw[31], imm[11] = raw[7], imm[10:5] = raw[30:25], imm[4:1] = raw[11:8], imm[0] = 0
-        0b1100011 => {
-            let imm = (((raw as i32) >> 31) << 12)
-                | (((raw >> 7) & 0x1) << 11) as i32
-                | (((raw >> 25) & 0x3F) << 5) as i32
-                | (((raw >> 8) & 0xF) << 1) as i32;
+        opcode::BRANCH => {
+            let imm = imm_b(raw);
             match funct3 {
-                0b000 => Some(Instruction::beq { rs1, rs2, imm }),
-                0b001 => Some(Instruction::bne { rs1, rs2, imm }),
-                0b100 => Some(Instruction::blt { rs1, rs2, imm }),
-                0b101 => Some(Instruction::bge { rs1, rs2, imm }),
-                0b110 => Some(Instruction::bltu { rs1, rs2, imm }),
-                0b111 => Some(Instruction::bgeu { rs1, rs2, imm }),
+                funct3::BEQ => Some(Instruction::beq { rs1, rs2, imm }),
+                funct3::BNE => Some(Instruction::bne { rs1, rs2, imm }),
+                funct3::BLT => Some(Instruction::blt { rs1, rs2, imm }),
+                funct3::BGE => Some(Instruction::bge { rs1, rs2, imm }),
+                funct3::BLTU => Some(Instruction::bltu { rs1, rs2, imm }),
+                funct3::BGEU => Some(Instruction::bgeu { rs1, rs2, imm }),
                 _ => None,
             }
         }
 
         // Loads (I-type)
-        0b0000011 => {
-            let imm = (raw as i32) >> 20;
+        opcode::LOAD => {
+            let imm = imm_i(raw);
             match funct3 {
-                0b000 => Some(Instruction::lb { rd, rs1, imm }),
-                0b001 => Some(Instruction::lh { rd, rs1, imm }),
-                0b010 => Some(Instruction::lw { rd, rs1, imm }),
-                0b100 => Some(Instruction::lbu { rd, rs1, imm }),
-                0b101 => Some(Instruction::lhu { rd, rs1, imm }),
+                funct3::LB => Some(Instruction::lb { rd, rs1, imm }),
+                funct3::LH => Some(Instruction::lh { rd, rs1, imm }),
+                funct3::LW => Some(Instruction::lw { rd, rs1, imm }),
+                funct3::LBU => Some(Instruction::lbu { rd, rs1, imm }),
+                funct3::LHU => Some(Instruction::lhu { rd, rs1, imm }),
                 _ => None,
             }
         }
 
         // Stores (S-type)
         // imm[11:5] = raw[31:25], imm[4:0] = raw[11:7]
-        0b0100011 => {
-            let imm = ((raw as i32 >> 25) << 5) | (((raw >> 7) & 0x1F) as i32);
+        opcode::STORE => {
+            let imm = imm_s(raw);
             match funct3 {
-                0b000 => Some(Instruction::sb { rs1, rs2, imm }),
-                0b001 => Some(Instruction::sh { rs1, rs2, imm }),
-                0b010 => Some(Instruction::sw { rs1, rs2, imm }),
+                funct3::SB => Some(Instruction::sb { rs1, rs2, imm }),
+                funct3::SH => Some(Instruction::sh { rs1, rs2, imm }),
+                funct3::SW => Some(Instruction::sw { rs1, rs2, imm }),
                 _ => None,
             }
         }
 
         // I-type ALU & shifts
-        0b0010011 => {
-            let imm = (raw as i32) >> 20;
+        opcode::OP_IMM => {
+            let imm = imm_i(raw);
             match funct3 {
-                0b000 => Some(Instruction::addi { rd, rs1, imm }),
-                0b010 => Some(Instruction::slti { rd, rs1, imm }),
-                0b011 => Some(Instruction::sltiu { rd, rs1, imm }),
-                0b100 => Some(Instruction::xori { rd, rs1, imm }),
-                0b110 => Some(Instruction::ori { rd, rs1, imm }),
-                0b111 => Some(Instruction::andi { rd, rs1, imm }),
+                funct3::ADDI => Some(Instruction::addi { rd, rs1, imm }),
+                funct3::SLTI => Some(Instruction::slti { rd, rs1, imm }),
+                funct3::SLTIU => Some(Instruction::sltiu { rd, rs1, imm }),
+                funct3::XORI => Some(Instruction::xori { rd, rs1, imm }),
+                funct3::ORI => Some(Instruction::ori { rd, rs1, imm }),
+                funct3::ANDI => Some(Instruction::andi { rd, rs1, imm }),
                 // Shift amount is lower 5 bits (shamt), funct7 must be 0x00
-                0b001 if funct7 == 0x00 => Some(Instruction::slli { rd, rs1, shamt }),
+                funct3::SLLI if funct7 == funct7::BASE => {
+                    Some(Instruction::slli { rd, rs1, shamt })
+                }
                 // SRLI funct7 == 0x00, SRAI funct7 == 0x20 (bit 30 set for arithmetic shift)
-                0b101 if funct7 == 0x00 => Some(Instruction::srli { rd, rs1, shamt }),
-                0b101 if funct7 == 0x20 => Some(Instruction::srai { rd, rs1, shamt }),
+                funct3::SRLI_SRAI if funct7 == funct7::BASE => {
+                    Some(Instruction::srli { rd, rs1, shamt })
+                }
+                funct3::SRLI_SRAI if funct7 == funct7::ALT => {
+                    Some(Instruction::srai { rd, rs1, shamt })
+                }
                 _ => None,
             }
         }
 
         // R-type
         // Bit 30 differentiates add/sub and srl/sra
-        0b0110011 => match (funct3, funct7) {
-            (0b000, 0x00) => Some(Instruction::add { rd, rs1, rs2 }),
-            (0b000, 0x20) => Some(Instruction::sub { rd, rs1, rs2 }),
-            (0b001, 0x00) => Some(Instruction::sll { rd, rs1, rs2 }),
-            (0b010, 0x00) => Some(Instruction::slt { rd, rs1, rs2 }),
-            (0b011, 0x00) => Some(Instruction::sltu { rd, rs1, rs2 }),
-            (0b100, 0x00) => Some(Instruction::xor { rd, rs1, rs2 }),
-            (0b101, 0x00) => Some(Instruction::srl { rd, rs1, rs2 }),
-            (0b101, 0x20) => Some(Instruction::sra { rd, rs1, rs2 }),
-            (0b110, 0x00) => Some(Instruction::or { rd, rs1, rs2 }),
-            (0b111, 0x00) => Some(Instruction::and { rd, rs1, rs2 }),
+        opcode::OP => match (funct3, funct7) {
+            (funct3::ADD_SUB, funct7::BASE) => Some(Instruction::add { rd, rs1, rs2 }),
+            (funct3::ADD_SUB, funct7::ALT) => Some(Instruction::sub { rd, rs1, rs2 }),
+            (funct3::SLL, funct7::BASE) => Some(Instruction::sll { rd, rs1, rs2 }),
+            (funct3::SLT, funct7::BASE) => Some(Instruction::slt { rd, rs1, rs2 }),
+            (funct3::SLTU, funct7::BASE) => Some(Instruction::sltu { rd, rs1, rs2 }),
+            (funct3::XOR, funct7::BASE) => Some(Instruction::xor { rd, rs1, rs2 }),
+            (funct3::SRL_SRA, funct7::BASE) => Some(Instruction::srl { rd, rs1, rs2 }),
+            (funct3::SRL_SRA, funct7::ALT) => Some(Instruction::sra { rd, rs1, rs2 }),
+            (funct3::OR, funct7::BASE) => Some(Instruction::or { rd, rs1, rs2 }),
+            (funct3::AND, funct7::BASE) => Some(Instruction::and { rd, rs1, rs2 }),
             _ => None,
         },
 
         // FENCE
-        0b0001111 => {
-            if funct3 == 0b000 && rd == 0 && rs1 == 0 {
+        opcode::FENCE => {
+            if funct3 == funct3::FENCE && rd == 0 && rs1 == 0 {
                 Some(Instruction::fence)
             } else {
                 None
@@ -189,9 +258,9 @@ pub fn parse(raw: u32) -> Option<Instruction> {
         }
 
         // ECALL / EBREAK
-        0b1110011 => match raw {
-            0x00000073 => Some(Instruction::ecall),
-            0x00100073 => Some(Instruction::ebreak),
+        opcode::SYSTEM => match raw {
+            system::ECALL => Some(Instruction::ecall),
+            system::EBREAK => Some(Instruction::ebreak),
             _ => None,
         },
 
@@ -203,66 +272,112 @@ impl Instruction {
     pub fn encode(&self) -> u32 {
         match *self {
             // Upper Immediate (U-type)
-            Instruction::lui { rd, imm } => encode_u(0b0110111, rd, imm),
-            Instruction::auipc { rd, imm } => encode_u(0b0010111, rd, imm),
+            Instruction::lui { rd, imm } => encode_u(opcode::LUI, rd, imm),
+            Instruction::auipc { rd, imm } => encode_u(opcode::AUIPC, rd, imm),
 
             // Unconditional Jumps
-            Instruction::jal { rd, imm } => encode_j(0b1101111, rd, imm),
-            Instruction::jalr { rd, rs1, imm } => encode_i(0b1100111, rd, 0b000, rs1, imm),
+            Instruction::jal { rd, imm } => encode_j(opcode::JAL, rd, imm),
+            Instruction::jalr { rd, rs1, imm } => {
+                encode_i(opcode::JALR, rd, funct3::JALR, rs1, imm)
+            }
 
             // Conditional Branches (B-type)
-            Instruction::beq { rs1, rs2, imm } => encode_b(0b1100011, 0b000, rs1, rs2, imm),
-            Instruction::bne { rs1, rs2, imm } => encode_b(0b1100011, 0b001, rs1, rs2, imm),
-            Instruction::blt { rs1, rs2, imm } => encode_b(0b1100011, 0b100, rs1, rs2, imm),
-            Instruction::bge { rs1, rs2, imm } => encode_b(0b1100011, 0b101, rs1, rs2, imm),
-            Instruction::bltu { rs1, rs2, imm } => encode_b(0b1100011, 0b110, rs1, rs2, imm),
-            Instruction::bgeu { rs1, rs2, imm } => encode_b(0b1100011, 0b111, rs1, rs2, imm),
+            Instruction::beq { rs1, rs2, imm } => {
+                encode_b(opcode::BRANCH, funct3::BEQ, rs1, rs2, imm)
+            }
+            Instruction::bne { rs1, rs2, imm } => {
+                encode_b(opcode::BRANCH, funct3::BNE, rs1, rs2, imm)
+            }
+            Instruction::blt { rs1, rs2, imm } => {
+                encode_b(opcode::BRANCH, funct3::BLT, rs1, rs2, imm)
+            }
+            Instruction::bge { rs1, rs2, imm } => {
+                encode_b(opcode::BRANCH, funct3::BGE, rs1, rs2, imm)
+            }
+            Instruction::bltu { rs1, rs2, imm } => {
+                encode_b(opcode::BRANCH, funct3::BLTU, rs1, rs2, imm)
+            }
+            Instruction::bgeu { rs1, rs2, imm } => {
+                encode_b(opcode::BRANCH, funct3::BGEU, rs1, rs2, imm)
+            }
 
             // Loads (I-type)
-            Instruction::lb { rd, rs1, imm } => encode_i(0b0000011, rd, 0b000, rs1, imm),
-            Instruction::lh { rd, rs1, imm } => encode_i(0b0000011, rd, 0b001, rs1, imm),
-            Instruction::lw { rd, rs1, imm } => encode_i(0b0000011, rd, 0b010, rs1, imm),
-            Instruction::lbu { rd, rs1, imm } => encode_i(0b0000011, rd, 0b100, rs1, imm),
-            Instruction::lhu { rd, rs1, imm } => encode_i(0b0000011, rd, 0b101, rs1, imm),
+            Instruction::lb { rd, rs1, imm } => encode_i(opcode::LOAD, rd, funct3::LB, rs1, imm),
+            Instruction::lh { rd, rs1, imm } => encode_i(opcode::LOAD, rd, funct3::LH, rs1, imm),
+            Instruction::lw { rd, rs1, imm } => encode_i(opcode::LOAD, rd, funct3::LW, rs1, imm),
+            Instruction::lbu { rd, rs1, imm } => encode_i(opcode::LOAD, rd, funct3::LBU, rs1, imm),
+            Instruction::lhu { rd, rs1, imm } => encode_i(opcode::LOAD, rd, funct3::LHU, rs1, imm),
 
             // Stores (S-type)
-            Instruction::sb { rs1, rs2, imm } => encode_s(0b0100011, 0b000, rs1, rs2, imm),
-            Instruction::sh { rs1, rs2, imm } => encode_s(0b0100011, 0b001, rs1, rs2, imm),
-            Instruction::sw { rs1, rs2, imm } => encode_s(0b0100011, 0b010, rs1, rs2, imm),
+            Instruction::sb { rs1, rs2, imm } => encode_s(opcode::STORE, funct3::SB, rs1, rs2, imm),
+            Instruction::sh { rs1, rs2, imm } => encode_s(opcode::STORE, funct3::SH, rs1, rs2, imm),
+            Instruction::sw { rs1, rs2, imm } => encode_s(opcode::STORE, funct3::SW, rs1, rs2, imm),
 
             // Immediate Arithmetic (I-type)
-            Instruction::addi { rd, rs1, imm } => encode_i(0b0010011, rd, 0b000, rs1, imm),
-            Instruction::slti { rd, rs1, imm } => encode_i(0b0010011, rd, 0b010, rs1, imm),
-            Instruction::sltiu { rd, rs1, imm } => encode_i(0b0010011, rd, 0b011, rs1, imm),
-            Instruction::xori { rd, rs1, imm } => encode_i(0b0010011, rd, 0b100, rs1, imm),
-            Instruction::ori { rd, rs1, imm } => encode_i(0b0010011, rd, 0b110, rs1, imm),
-            Instruction::andi { rd, rs1, imm } => encode_i(0b0010011, rd, 0b111, rs1, imm),
+            Instruction::addi { rd, rs1, imm } => {
+                encode_i(opcode::OP_IMM, rd, funct3::ADDI, rs1, imm)
+            }
+            Instruction::slti { rd, rs1, imm } => {
+                encode_i(opcode::OP_IMM, rd, funct3::SLTI, rs1, imm)
+            }
+            Instruction::sltiu { rd, rs1, imm } => {
+                encode_i(opcode::OP_IMM, rd, funct3::SLTIU, rs1, imm)
+            }
+            Instruction::xori { rd, rs1, imm } => {
+                encode_i(opcode::OP_IMM, rd, funct3::XORI, rs1, imm)
+            }
+            Instruction::ori { rd, rs1, imm } => {
+                encode_i(opcode::OP_IMM, rd, funct3::ORI, rs1, imm)
+            }
+            Instruction::andi { rd, rs1, imm } => {
+                encode_i(opcode::OP_IMM, rd, funct3::ANDI, rs1, imm)
+            }
             Instruction::slli { rd, rs1, shamt } => {
-                encode_i_shift(0b0010011, rd, 0b001, rs1, shamt, 0x00)
+                encode_i_shift(opcode::OP_IMM, rd, funct3::SLLI, rs1, shamt, funct7::BASE)
             }
             Instruction::srli { rd, rs1, shamt } => {
-                encode_i_shift(0b0010011, rd, 0b101, rs1, shamt, 0x00)
+                encode_i_shift(opcode::OP_IMM, rd, funct3::SRLI, rs1, shamt, funct7::BASE)
             }
             Instruction::srai { rd, rs1, shamt } => {
-                encode_i_shift(0b0010011, rd, 0b101, rs1, shamt, 0x20)
+                encode_i_shift(opcode::OP_IMM, rd, funct3::SRAI, rs1, shamt, funct7::ALT)
             }
 
             // Register Arithmetic (R-type)
-            Instruction::add { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b000, rs1, rs2, 0x00),
-            Instruction::sub { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b000, rs1, rs2, 0x20),
-            Instruction::sll { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b001, rs1, rs2, 0x00),
-            Instruction::slt { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b010, rs1, rs2, 0x00),
-            Instruction::sltu { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b011, rs1, rs2, 0x00),
-            Instruction::xor { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b100, rs1, rs2, 0x00),
-            Instruction::srl { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b101, rs1, rs2, 0x00),
-            Instruction::sra { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b101, rs1, rs2, 0x20),
-            Instruction::or { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b110, rs1, rs2, 0x00),
-            Instruction::and { rd, rs1, rs2 } => encode_r(0b0110011, rd, 0b111, rs1, rs2, 0x00),
+            Instruction::add { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::ADD, rs1, rs2, funct7::BASE)
+            }
+            Instruction::sub { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::SUB, rs1, rs2, funct7::ALT)
+            }
+            Instruction::sll { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::SLL, rs1, rs2, funct7::BASE)
+            }
+            Instruction::slt { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::SLT, rs1, rs2, funct7::BASE)
+            }
+            Instruction::sltu { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::SLTU, rs1, rs2, funct7::BASE)
+            }
+            Instruction::xor { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::XOR, rs1, rs2, funct7::BASE)
+            }
+            Instruction::srl { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::SRL, rs1, rs2, funct7::BASE)
+            }
+            Instruction::sra { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::SRA, rs1, rs2, funct7::ALT)
+            }
+            Instruction::or { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::OR, rs1, rs2, funct7::BASE)
+            }
+            Instruction::and { rd, rs1, rs2 } => {
+                encode_r(opcode::OP, rd, funct3::AND, rs1, rs2, funct7::BASE)
+            }
 
             // System & Sync
-            Instruction::fence => 0x0000000F,
-            Instruction::ecall => 0x00000073,
-            Instruction::ebreak => 0x00100073,
+            Instruction::fence => fence::FENCE,
+            Instruction::ecall => system::ECALL,
+            Instruction::ebreak => system::EBREAK,
         }
     }
 }
@@ -270,30 +385,30 @@ impl Instruction {
 #[inline(always)]
 fn encode_r(opcode: u32, rd: usize, funct3: u32, rs1: usize, rs2: usize, funct7: u32) -> u32 {
     opcode
-        | (((rd as u32) & 0x1F) << 7)
-        | ((funct3 & 0x7) << 12)
-        | (((rs1 as u32) & 0x1F) << 15)
-        | (((rs2 as u32) & 0x1F) << 20)
-        | ((funct7 & 0x7F) << 25)
+        | (((rd as u32) & mask::RD) << shift::RD)
+        | ((funct3 & mask::FUNCT3) << shift::FUNCT3)
+        | (((rs1 as u32) & mask::RS1) << shift::RS1)
+        | (((rs2 as u32) & mask::RS2) << shift::RS2)
+        | ((funct7 & mask::FUNCT7) << shift::FUNCT7)
 }
 
 #[inline(always)]
 fn encode_i(opcode: u32, rd: usize, funct3: u32, rs1: usize, imm: i32) -> u32 {
     opcode
-        | (((rd as u32) & 0x1F) << 7)
-        | ((funct3 & 0x7) << 12)
-        | (((rs1 as u32) & 0x1F) << 15)
+        | (((rd as u32) & mask::RD) << shift::RD)
+        | ((funct3 & mask::FUNCT3) << shift::FUNCT3)
+        | (((rs1 as u32) & mask::RS1) << shift::RS1)
         | (((imm as u32) & 0xFFF) << 20)
 }
 
 #[inline(always)]
 fn encode_i_shift(opcode: u32, rd: usize, funct3: u32, rs1: usize, shamt: u32, funct7: u32) -> u32 {
     opcode
-        | (((rd as u32) & 0x1F) << 7)
-        | ((funct3 & 0x7) << 12)
-        | (((rs1 as u32) & 0x1F) << 15)
-        | ((shamt & 0x1F) << 20)
-        | ((funct7 & 0x7F) << 25)
+        | (((rd as u32) & mask::RD) << shift::RD)
+        | ((funct3 & mask::FUNCT3) << shift::FUNCT3)
+        | (((rs1 as u32) & mask::RS1) << shift::RS1)
+        | ((shamt & mask::SHAMT) << shift::SHAMT)
+        | ((funct7 & mask::FUNCT7) << shift::FUNCT7)
 }
 
 #[inline(always)]
@@ -301,9 +416,9 @@ fn encode_s(opcode: u32, funct3: u32, rs1: usize, rs2: usize, imm: i32) -> u32 {
     let imm_u = imm as u32;
     opcode
         | ((imm_u & 0x1F) << 7)
-        | ((funct3 & 0x7) << 12)
-        | (((rs1 as u32) & 0x1F) << 15)
-        | (((rs2 as u32) & 0x1F) << 20)
+        | ((funct3 & mask::FUNCT3) << shift::FUNCT3)
+        | (((rs1 as u32) & mask::RS1) << shift::RS1)
+        | (((rs2 as u32) & mask::RS2) << shift::RS2)
         | (((imm_u >> 5) & 0x7F) << 25)
 }
 
@@ -317,16 +432,16 @@ fn encode_b(opcode: u32, funct3: u32, rs1: usize, rs2: usize, imm: i32) -> u32 {
     opcode
         | (b_11 << 7)
         | (b_4_1 << 8)
-        | ((funct3 & 0x7) << 12)
-        | (((rs1 as u32) & 0x1F) << 15)
-        | (((rs2 as u32) & 0x1F) << 20)
+        | ((funct3 & mask::FUNCT3) << shift::FUNCT3)
+        | (((rs1 as u32) & mask::RS1) << shift::RS1)
+        | (((rs2 as u32) & mask::RS2) << shift::RS2)
         | (b_10_5 << 25)
         | (b_12 << 31)
 }
 
 #[inline(always)]
 fn encode_u(opcode: u32, rd: usize, imm: i32) -> u32 {
-    opcode | (((rd as u32) & 0x1F) << 7) | ((imm as u32) & !0xFFF)
+    opcode | (((rd as u32) & mask::RD) << shift::RD) | ((imm as u32) & !0xFFF)
 }
 
 #[inline(always)]
@@ -337,7 +452,7 @@ fn encode_j(opcode: u32, rd: usize, imm: i32) -> u32 {
     let j_11 = (imm_u >> 11) & 1;
     let j_10_1 = (imm_u >> 1) & 0x3FF;
     opcode
-        | (((rd as u32) & 0x1F) << 7)
+        | (((rd as u32) & mask::RD) << shift::RD)
         | (j_19_12 << 12)
         | (j_11 << 20)
         | (j_10_1 << 21)
