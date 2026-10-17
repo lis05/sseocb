@@ -18,27 +18,9 @@ cargo clippy --workspace --exclude int --all-targets -- -D warnings
 echo "--> Running unit tests..."
 cargo test --workspace --exclude int
 
-echo "--> Running bare-metal C E2E tests..."
+echo "--> Running C E2E tests..."
 bash scripts/run_tests.sh
 
-EXTRA_ARGS=()
-DECOMPRESSOR=""
-for arg in "$@"; do
-    case "$arg" in
-        native|noop|blaris|graemi|all)
-            DECOMPRESSOR="$arg"
-            ;;
-        *)
-            EXTRA_ARGS+=("$arg")
-            ;;
-    esac
-done
-
-if [[ -n "$DECOMPRESSOR" ]]; then
-    echo "--> Running orchestrator E2E tests ($DECOMPRESSOR)..."
-    bash e2e/test.sh "$DECOMPRESSOR" "${EXTRA_ARGS[@]}"
-else
-    echo "--> Running orchestrator E2E tests (native, noop, graemi, blaris)..."
-    bash e2e/test.sh "${EXTRA_ARGS[@]}"
-fi
+echo "--> Running E2E tests..."
+bash e2e/run.sh
 

@@ -21,7 +21,7 @@ scratch/
 crates/sim/test_run/artifacts/
 playground/artifacts
 demos/**/artifacts/
-e2e/tests/**/build/
+e2e/tests/**/artifacts/
 
 # Python cache
 __pycache__/

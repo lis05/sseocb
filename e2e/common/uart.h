@@ -1,16 +1,6 @@
-#ifndef E2E_UART_H
-#define E2E_UART_H
+#pragma once
 
-#define UART_BASE 0x40000000
-
-static inline void uart_putc(char c) {
-    *(volatile char *)UART_BASE = c;
-}
-
-static inline void uart_puts(const char *s) {
-    while (*s) {
-        uart_putc(*s++);
-    }
-}
-
-#endif
+void uart_putc(char c);
+void uart_puts(const char *s);
+void uart_print_uint(unsigned int n);
+void uart_print_int(int n);

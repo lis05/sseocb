@@ -233,8 +233,8 @@ SECTIONS
         . = ALIGN(4);
     }} > FLASH
 
-    _i_stack_top = ORIGIN(STACK) + LENGTH(STACK);
-    _g_stack_top = _i_stack_top - 1024;
+    _g_stack_top = ORIGIN(STACK) + LENGTH(STACK);
+    _i_stack_top = ORIGIN(INT_STACK) + LENGTH(INT_STACK);
 }}
 """)
 

@@ -20,8 +20,7 @@ cp "$REPO_ROOT/crates/sim/setup/memory.ld" "$ARTIFACTS_DIR/memory.ld"
 PASS_COUNT=0
 FAIL_COUNT=0
 
-for test_c in "$TEST_DIR"/*.c; do
-    [[ -f "$test_c" ]] || continue
+for test_c in "$TEST_DIR"/*.c; do [[ -f "$test_c" ]] || continue
     test_name="$(basename "$test_c" .c)"
     bin_file="$ARTIFACTS_DIR/${test_name}.bin"
     expected_out="$TEST_DIR/${test_name}.out"

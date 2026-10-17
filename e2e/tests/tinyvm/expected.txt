@@ -1,7 +1,0 @@
---- TinyVM Starting ---
-Arithmetic (15 + 25) * 3 = 120
-Bitwise (255 ^ 15) & 170 = 160
-Memory Array Sum = 60
-Factorial(4) = 24
-Fibonacci(5): 0 1 1 2 3 
---- TinyVM Finished ---
