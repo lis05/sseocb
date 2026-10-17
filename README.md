@@ -5,7 +5,7 @@ execution of programs which are larger than the target device's Flash memory siz
 ## Demo
 In this demo, uLisp Zero interpreter is run natively and by using SSEOCB. Native
 (uncompressed) program fails to link as it is too large (~23 KiB). With SSEOCB, it
-just barely fits in the 16 KiB Flash, outputting a star (see [`demos/ulisp`](demos/ulisp)).
+just barely fits in the 16 KiB Flash, outputting a star (see [`e2e/tests/ulisp`](e2e/tests/ulisp)).
 ![uLisp interpreter running via SSEOCB](demos-ulisp.png)
 
 ## Background
@@ -73,13 +73,12 @@ In the root:
   SSEOCB.
 - `e2e/` contains SSEOCB tests which include some simple programs and more complex
   ones (such as Lisp/Basic interpreters)
-- `demos/` contains demos that showcase SSEOCB usage.
 
 ## Milestones
 Completed:
 - The system is implemented and can correctly execute compressed binaries using
   `sim/`
-- An example guest program is provided such that `C + I < O` where `C` is the size of the compressed program, `I` is the size of the interpreter, and `O` is the size of the original, uncompressed guest program. (demos/ulisp).
+- An example guest program is provided such that `C + I < O` where `C` is the size of the compressed program, `I` is the size of the interpreter, and `O` is the size of the original, uncompressed guest program. (e2e/tests/ulisp).
 
 In progress:
 - Testing and validating the system on real hardware.

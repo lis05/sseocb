@@ -4,8 +4,10 @@ This demo runs **uLisp Zero 1.1** bare-metal on RV32E virtualized under **SSEOCB
 
 ## Files
 * [`all.sh`](all.sh): Compilation and test runner script.
+* [`Makefile`](Makefile): Build script for compiling guest object.
+* [`guest.c`](guest.c): Bare-metal C wrapper with software runtime builtins and setjmp/longjmp.
 * [`program.lisp`](program.lisp): Lisp source code executed on boot.
-* [`main.c`](main.c): Bare-metal C wrapper with software runtime builtins and setjmp/longjmp.
+* [`expected_output.txt`](expected_output.txt): Expected output for regression tests.
 * [`memory.ld`](memory.ld): Bare-metal memory map (Flash, RAM, Stack, UART).
 * [`ulisp/`](ulisp/): uLisp Zero core interpreter and MIT License.
 

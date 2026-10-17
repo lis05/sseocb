@@ -20,7 +20,6 @@ scratch/
 # E2E C test artifacts
 crates/sim/test_run/artifacts/
 playground/artifacts
-demos/**/artifacts/
 e2e/tests/**/artifacts/
 
 # Python cache
