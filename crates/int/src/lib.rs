@@ -24,6 +24,7 @@ macro_rules! label {
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
+    label!(panic_ebreak);
     asm::emit_ebreak();
     loop {}
 }
@@ -48,6 +49,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
     loop {
         let word = ChosenDecompressor::decompress_u32(vPC);
         let Some(instr) = parse(word) else {
+            label!(parse_ebreak);
             asm::emit_ebreak();
             loop {}
         };
@@ -76,6 +78,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 } else {
                     // This must never happen. vP must be isolated from all other code, so no
                     // target withing 1MiB should ever be found.
+                    label!(jal_ebreak);
                     asm::emit_ebreak();
                     loop {}
                 }
@@ -96,8 +99,12 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 if is_instr_in_vp(target_pc) {
                     vPC = target_pc.wrapping_sub(int::g_vpbase());
                 } else {
-                    bridge::native_call!(target_pc);
-                    vPC = vPC.wrapping_add(4);
+                    if bridge::is_trampoline(target_pc) {
+                        vPC = bridge::get_trampoline_vp_offset(target_pc);
+                    } else {
+                        bridge::native_call!(target_pc);
+                        vPC = vPC.wrapping_add(4);
+                    }
                 }
             }
             Instruction::beq { rs1, rs2, imm }
@@ -126,6 +133,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     } else {
                         // This must never happen. vP must be isolated from all other code, so no
                         // target within 4KiB should ever be found.
+                        label!(branch_ebreak);
                         asm::emit_ebreak();
                         loop {}
                     }
@@ -142,6 +150,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 let addr = bridge::read_guest_reg(rs1).wrapping_add_signed(imm) as usize;
                 if is_addr_in_vp(addr as u32) {
                     // This must never happen. TODO: disable such checks with a feature.
+                    label!(load_ebreak);
                     asm::emit_ebreak();
                     loop {}
                 }
@@ -167,6 +176,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 let addr = bridge::read_guest_reg(rs1).wrapping_add_signed(imm) as usize;
                 if is_addr_in_vp(addr as u32) {
                     // This must never happen. TODO: disable such checks with a feature.
+                    label!(store_ebreak);
                     asm::emit_ebreak();
                     loop {}
                 }
@@ -251,10 +261,12 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 vPC = vPC.wrapping_add(4);
             }
             Instruction::ebreak => {
+                label!(ebreak_ebreak);
                 asm::emit_ebreak();
                 vPC = vPC.wrapping_add(4);
             }
             _ => {
+                label!(other_ebreak);
                 asm::emit_ebreak();
                 loop {}
             }

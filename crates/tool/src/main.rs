@@ -72,8 +72,10 @@ fn get_addressable_symbols(
 }
 
 fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std::io::Result<()> {
-    let mut trampolines =
-        String::from(".section .__sseocb_g.text.plt, \"ax\", @progbits\n.p2align 2\n\n");
+    let mut trampolines = String::from(
+        ".section .__sseocb_g.text.plt, \"ax\", @progbits\n.p2align 2\n\
+        .globl __sseocb_i_trampolines\n__sseocb_i_trampolines:\n\n",
+    );
     let mut linker = String::new();
     let mut wrap = String::new();
 
@@ -92,6 +94,7 @@ fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std
         linker.push_str(&format!("__wrap_{sym} = {plt_sym};\n"));
         wrap.push_str(&format!("--wrap={sym}\n"));
     }
+    trampolines.push_str(".globl __sseocb_i_trampolines_end\n__sseocb_i_trampolines_end:\n");
 
     fs::write(dir.join("trampolines.s"), trampolines)?;
     fs::write(dir.join("plt.ld"), linker)?;
@@ -531,7 +534,6 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
             offset, slot, sym_name
         ));
     }
-    s_content.push_str("__sseocb_i_plt_offsets_end:\n");
 
     let plt_vp_path = out_dir.join("plt_vP.s");
     fs::write(&plt_vp_path, s_content)?;

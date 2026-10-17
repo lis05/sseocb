@@ -27,3 +27,6 @@ e2e/tests/**/build/
 __pycache__/
 *.pyc
 
+# Local private notes & research
+sseocb_blaris_spec.md
+
