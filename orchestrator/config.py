@@ -33,3 +33,4 @@ class Config:
     max_cycles: int = 0
     log: bool = False
     size: bool = False
+    size_only: bool = False

@@ -39,7 +39,7 @@ case "$MODE" in
             -fno-optimize-sibling-calls
             -ffunction-sections
             -fno-addrsig
-            -O2
+            -Oz
         )
 
         HAS_COMPILE_OR_SPECIAL=0
@@ -85,7 +85,7 @@ case "$MODE" in
     native)
         BASE_FLAGS+=(
             -fno-optimize-sibling-calls
-            -O2
+            -Oz
         )
 
         HAS_COMPILE_OR_SPECIAL=0

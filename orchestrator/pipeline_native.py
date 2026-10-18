@@ -49,7 +49,7 @@ def compile_rv32e_if_source(
                 "-ffreestanding",
                 "-nostdlib",
                 "-fno-optimize-sibling-calls",
-                "-O2",
+                "-Oz",
                 *inc_args,
                 *config.c_flags,
                 "-c",

@@ -48,6 +48,10 @@ for arg in "$@"; do
         --size)
             EXTRA_ARGS+=(--size)
             ;;
+        --size-only)
+            EXTRA_ARGS+=(--size-only)
+            DEBUG=0
+            ;;
         --log)
             EXTRA_ARGS+=(--log)
             LOG=1
@@ -65,6 +69,7 @@ for arg in "$@"; do
             echo "  --graemi      Use graemi decompressor"
             echo "  --noop        Use noop decompressor (default)"
             echo "  --size        Print detailed memory size breakdown"
+            echo "  --size-only   Print memory size breakdown without running simulator"
             echo "  --log         Print every command executed"
             echo "  --clean       Clean artifacts/ directory before building"
             echo "  -h, --help    Show this help message"

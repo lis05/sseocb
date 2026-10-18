@@ -134,6 +134,11 @@ def add_common_build_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Print detailed memory size breakdown",
     )
+    parser.add_argument(
+        "--size-only",
+        action="store_true",
+        help="Run pipeline and print size report without running the simulator",
+    )
 
 
 def add_common_run_args(parser: argparse.ArgumentParser) -> None:
@@ -208,6 +213,7 @@ def build_config(args: argparse.Namespace, subcommand: str, target: str) -> Conf
         max_cycles=getattr(args, "max_cycles", 0),
         log=getattr(args, "log", False),
         size=getattr(args, "size", False),
+        size_only=getattr(args, "size_only", False),
     )
 
 
@@ -276,10 +282,9 @@ def print_size_report(toolchain: Toolchain, elf_path: Path) -> None:
             name = parts[0]
             try:
                 sz = int(parts[1])
-                if name == ".__sseocb_g.vP":
+                if name == ".__sseocb_g.vP" or name == "__sseocb_g.vP":
                     orig_vp = sz
-                    continue
-                elif name == ".__sseocb_i.vP":
+                elif name == ".__sseocb_i.vP" or name == "__sseocb_i.vP":
                     comp_vp = sz
 
                 is_nobits = (
@@ -288,6 +293,8 @@ def print_size_report(toolchain: Toolchain, elf_path: Path) -> None:
                     or name.startswith(".bss.")
                     or name.startswith(".sbss")
                     or name == ".__sseocb_i.bss"
+                    or name == ".__sseocb_g.vP"
+                    or name == "__sseocb_g.vP"
                 )
                 if not is_nobits:
                     total_size += sz
@@ -366,20 +373,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if config.subcommand == "build" and config.target == "native":
             bin_path, entry_addr, elf_path = build_native(config, toolchain)
-            print(f"Native binary built: {bin_path} (entry: {entry_addr})")
-            if config.size:
+            if not config.size_only:
+                print(f"Native binary built: {bin_path} (entry: {entry_addr})")
+            if config.size or config.size_only:
                 print_native_size_report(toolchain, elf_path)
             return 0
 
         if config.subcommand == "build" and config.target == "sseocb":
             bin_path, entry_addr, elf_path = build_sseocb(config, toolchain)
-            print(f"SSEOCB binary built: {bin_path} (entry: {entry_addr})")
-            if config.size:
+            if not config.size_only:
+                print(f"SSEOCB binary built: {bin_path} (entry: {entry_addr})")
+            if config.size or config.size_only:
                 print_sseocb_size_report(toolchain, elf_path)
             return 0
 
         if config.subcommand == "run" and config.target == "native":
             bin_path, entry_addr, elf_path = build_native(config, toolchain)
+            if config.size_only:
+                print_native_size_report(toolchain, elf_path)
+                return 0
             sim_res = run_sim(
                 toolchain,
                 config.memory_ld,
@@ -403,6 +415,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if config.subcommand == "run" and config.target == "sseocb":
             bin_path, entry_addr, elf_path = build_sseocb(config, toolchain)
+            if config.size_only:
+                print_sseocb_size_report(toolchain, elf_path)
+                return 0
             sim_res = run_sim(
                 toolchain,
                 config.memory_ld,
@@ -427,6 +442,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         if config.subcommand == "run" and config.target == "bench":
             # 1. Run Native (quiet)
             native_bin, native_entry, native_elf = build_native(config, toolchain)
+            # 2. Run SSEOCB
+            sseocb_bin, entry_addr, elf_path = build_sseocb(config, toolchain)
+
+            if config.size_only:
+                print_sseocb_size_report(toolchain, elf_path, native_elf_path=native_elf)
+                return 0
+
             native_res = run_sim(
                 toolchain,
                 config.memory_ld,
@@ -438,8 +460,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 stream_output=False,
             )
 
-            # 2. Run SSEOCB (stream live if print_output is enabled)
-            sseocb_bin, entry_addr, elf_path = build_sseocb(config, toolchain)
             sseocb_res = run_sim(
                 toolchain,
                 config.memory_ld,
