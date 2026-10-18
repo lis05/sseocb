@@ -607,6 +607,20 @@ fn run_compress_graemi(input_path: &str, output_path: &str) -> Result<(), Box<dy
 
 /// Promotes every static (`STB_LOCAL`) function in an ELF object to a global
 /// symbol named `__sseocb_s_<file>_<name>` by parsing the object with
+fn fnv1a_hash(parts: &[&[u8]]) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET_BASIS;
+    for part in parts {
+        for &byte in *part {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+    hash
+}
+
 /// `object::build::elf::Builder` and writing out a fresh object file.
 ///
 /// This lets `ld --wrap` intercept references to static functions (which it
@@ -624,16 +638,17 @@ fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
         .find(|s| s.st_type() == elf::STT_FILE)
         .and_then(|s| std::str::from_utf8(&s.name).ok())
         .filter(|s| !s.is_empty())
-        .unwrap_or(file_path);
-    let base_name = Path::new(source_name)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| file_path.to_string());
+    let base_name = Path::new(&source_name)
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("obj");
+        .unwrap_or("obj")
+        .to_string();
     let sanitized: String = base_name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    let prefix = format!("__sseocb_s_{sanitized}_");
 
     // Promote every named, defined, local function symbol to global.
     // `Builder::write` automatically reorders STB_LOCAL before STB_GLOBAL,
@@ -649,7 +664,33 @@ fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
             && !name.is_empty()
             && !name.starts_with("__sseocb_s_")
         {
-            sym.name = format!("{prefix}{name}").into_bytes().into();
+            let content: &[u8] = if let Some(sec_id) = sym.section {
+                let sec = builder.sections.get(sec_id);
+                match &sec.data {
+                    object::build::elf::SectionData::Data(d) => {
+                        let start = sym.st_value as usize;
+                        let end = (start + sym.st_size as usize).min(d.len());
+                        if start < end {
+                            &d[start..end]
+                        } else if start < d.len() {
+                            &d[start..]
+                        } else {
+                            &d[..]
+                        }
+                    }
+                    _ => &[],
+                }
+            } else {
+                &[]
+            };
+
+            let hash = fnv1a_hash(&[content, base_name.as_bytes(), file_path.as_bytes()]);
+            let hash_hex = format!("{:016x}", hash);
+            let hash_8 = &hash_hex[..8];
+
+            sym.name = format!("__sseocb_s_{sanitized}_{hash_8}_{name}")
+                .into_bytes()
+                .into();
             sym.set_st_info(elf::STB_GLOBAL, elf::STT_FUNC);
             modified = true;
         }
@@ -1143,7 +1184,13 @@ mod tests {
         let parsed = object::File::parse(&*updated).unwrap();
         let sym = parsed
             .symbols()
-            .find(|s| s.name() == Ok("__sseocb_s_test_c_foo"))
+            .find(|s| {
+                if let Ok(name) = s.name() {
+                    name.starts_with("__sseocb_s_test_c_") && name.ends_with("_foo")
+                } else {
+                    false
+                }
+            })
             .expect("Renamed symbol not found");
         assert!(sym.is_global());
 

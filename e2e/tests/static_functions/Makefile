@@ -2,7 +2,7 @@ COMMON_DIR := ../../common
 COMMON_MODE ?= guest
 CC := ../../../scripts/clang-sseocb
 
-GUEST_SOURCES := guest.c
+GUEST_SOURCES := guest.c dir/guest.c
 NATIVE_SOURCES := $(wildcard native.c)
 
 GUEST_OBJS := $(patsubst %.c,artifacts/%.guest.o,$(GUEST_SOURCES))

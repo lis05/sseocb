@@ -113,12 +113,13 @@ if [[ $MODE_TEST -eq 1 ]]; then
     fi
 
     if "${cmd[@]}"; then
-        if ! grep -q "__sseocb_g_plt___sseocb_s_guest_c_a:" artifacts/trampolines.s; then
-            echo "TEST: FAILED"
+        a_count=$(grep -o -E "__sseocb_g_plt___sseocb_s_guest_c_[0-9a-f]{8}_a:" artifacts/trampolines.s | sort -u | wc -l)
+        if [[ "$a_count" -ne 2 ]]; then
+            echo "TEST: FAILED: expected 2 distinct trampolines for static 'a', got $a_count"
             exit 1
         fi
-        if ! grep -q "__sseocb_g_plt___sseocb_s_guest_c_b:" artifacts/trampolines.s; then
-            echo "TEST: FAILED"
+        if ! grep -q -E "__sseocb_g_plt___sseocb_s_guest_c_[0-9a-f]{8}_b:" artifacts/trampolines.s; then
+            echo "TEST: FAILED: missing trampoline for static 'b'"
             exit 1
         fi
         echo "TEST: PASSED"

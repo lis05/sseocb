@@ -12,10 +12,11 @@ static int b(int n) {
 
 typedef int (*handler)(int);
 
-void native(handler[2]);
+handler get_dir_a(void);
+void native(handler[3]);
 
 void _start(void) {
-    handler handlers[2] = {a, b};
+    handler handlers[3] = {a, b, get_dir_a()};
     native(handlers);
     exit(0);
 }
