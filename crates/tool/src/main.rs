@@ -488,7 +488,9 @@ fn run_post(linked_elf_path: &str, output_dir: &str) -> Result<(), Box<dyn Error
 
     let mut symbol_map = HashMap::new();
     for sym in file.symbols() {
-        if let Ok(name) = sym.name() {
+        if !sym.is_undefined()
+            && let Ok(name) = sym.name()
+        {
             symbol_map.insert(name.to_string(), sym.address());
         }
     }
@@ -605,8 +607,6 @@ fn run_compress_graemi(input_path: &str, output_path: &str) -> Result<(), Box<dy
     Ok(())
 }
 
-/// Promotes every static (`STB_LOCAL`) function in an ELF object to a global
-/// symbol named `__sseocb_s_<file>_<name>` by parsing the object with
 fn fnv1a_hash(parts: &[&[u8]]) -> u64 {
     const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
@@ -621,11 +621,13 @@ fn fnv1a_hash(parts: &[&[u8]]) -> u64 {
     hash
 }
 
+/// Promotes every static (`STB_LOCAL`) function in an ELF object to a global
+/// symbol named `__sseocb_s_<file>_<hash>_<name>` by parsing the object with
 /// `object::build::elf::Builder` and writing out a fresh object file.
 ///
 /// This lets `ld --wrap` intercept references to static functions (which it
-/// otherwise ignores), while the file-name prefix prevents identically named
-/// statics from different translation units from colliding.
+/// otherwise ignores), while the file-name prefix and deterministic hash prevent
+/// identically named statics from different translation units from colliding.
 fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
     let data = fs::read(file_path)?;
     let mut builder = object::build::elf::Builder::read(&*data)?;
@@ -1208,5 +1210,23 @@ mod tests {
         let addressable = get_addressable_symbols(&parsed_guest, Some(&parsed_native));
         assert!(addressable.contains_key("guest_func"));
         assert!(!addressable.contains_key("unrelated_func"));
+    }
+
+    #[test]
+    fn test_post_ignores_undefined_symbols() {
+        let elf_bytes = build_test_elf(None, &[(b"my_func", true)], &[b"my_func"]);
+        let parsed = object::File::parse(&*elf_bytes).unwrap();
+
+        let mut symbol_map = HashMap::new();
+        for sym in parsed.symbols() {
+            if !sym.is_undefined()
+                && let Ok(name) = sym.name()
+            {
+                symbol_map.insert(name.to_string(), sym.address());
+            }
+        }
+
+        assert!(symbol_map.contains_key("my_func"));
+        assert_eq!(symbol_map.get("my_func"), Some(&0));
     }
 }
