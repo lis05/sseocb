@@ -47,8 +47,8 @@ pub fn is_trampoline(target_pc: u32) -> bool {
 #[inline(always)]
 pub fn get_trampoline_vp_offset(target_pc: u32) -> u32 {
     // Assuming it is a trampoline
-    // NOTE: >> 1 only works for 512 8byte entries.
-    let offset = (target_pc - core::ptr::addr_of!(__sseocb_i_trampolines) as u32) >> 1;
+    // NOTE: this works for 2^18 unique trampolines; enough in my opinion...
+    let offset = target_pc - core::ptr::addr_of!(__sseocb_i_trampolines) as u32;
     let ptr = (core::ptr::addr_of!(__sseocb_i_plt_offsets) as u32 + offset) as *const u32;
     return unsafe { *ptr };
 }

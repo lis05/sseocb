@@ -185,7 +185,7 @@ __sseocb_i_native_call:
 __sseocb_i_plt_call:
     # __sseocb_i_plt_call transfers control from native code to the intepreter.
     #
-    # PLT slot offset is in x31
+    # Incoming addr is in x31, plt_slot is x31 - __sseocb_i_trampolines - 4
     # Return address is in x1 (native)
     #
     # Guest stack: x2
@@ -213,6 +213,10 @@ __sseocb_i_plt_call:
 
     # Return to the epilogue
     la x1, __sseocb_i_plt_return
+
+    # Calculate plt slot
+    la x30, __sseocb_i_trampolines + 4 #  4 because jal stores PC+4
+    sub x31, x31, x30
 
     # Load vPC into x10+15=x25
     la x30, __sseocb_i_plt_offsets

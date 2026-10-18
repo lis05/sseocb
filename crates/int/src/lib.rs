@@ -24,8 +24,9 @@ macro_rules! label {
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
+    bridge::write_guest_reg(10, !0);
     label!(panic_ebreak);
-    gracefully_crash();
+    crash();
 }
 
 #[inline(always)]
@@ -43,7 +44,7 @@ fn is_addr_in_vp(addr: u32) -> bool {
 }
 
 #[inline(always)]
-fn gracefully_crash() -> ! {
+fn crash() -> ! {
     asm::emit_ebreak();
     loop {}
 }
@@ -93,14 +94,14 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     // This must never happen. vP must be isolated from all other code, so no
                     // target withing 1MiB should ever be found.
                     label!(jal_ebreak);
-                    gracefully_crash();
+                    crash();
                 }
             }
             opcode::JALR => {
                 label!(jalr);
                 if f3 != funct3::JALR {
                     label!(jalr_ebreak);
-                    gracefully_crash();
+                    crash();
                 }
                 let imm = imm_i(raw);
 
@@ -140,7 +141,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     funct3::BGE => (r1 as i32) >= (r2 as i32),
                     funct3::BLTU => r1 < r2,
                     funct3::BGEU => r1 >= r2,
-                    _ => gracefully_crash(),
+                    _ => crash(),
                 };
                 if cond {
                     let addr = int::g_vpbase().wrapping_add(vPC).wrapping_add_signed(imm);
@@ -150,7 +151,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                         // This must never happen. vP must be isolated from all other code, so no
                         // target within 4KiB should ever be found.
                         label!(branch_ebreak);
-                        gracefully_crash();
+                        crash();
                     }
                 } else {
                     vPC = vPC.wrapping_add(4);
@@ -163,7 +164,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 if is_addr_in_vp(addr as u32) {
                     // This must never happen. TODO: disable such checks with a feature.
                     label!(load_ebreak);
-                    gracefully_crash();
+                    crash();
                 }
 
                 let value = unsafe {
@@ -173,7 +174,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                         funct3::LW => *(addr as *const u32),
                         funct3::LBU => *(addr as *const u8) as u32,
                         funct3::LHU => *(addr as *const u16) as u32,
-                        _ => gracefully_crash(),
+                        _ => crash(),
                     }
                 };
 
@@ -187,7 +188,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 if is_addr_in_vp(addr as u32) {
                     // This must never happen. TODO: disable such checks with a feature.
                     label!(store_ebreak);
-                    gracefully_crash();
+                    crash();
                 }
 
                 let value = bridge::read_guest_reg(rs2);
@@ -196,7 +197,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                         funct3::SB => *(addr as *mut u8) = value as u8,
                         funct3::SH => *(addr as *mut u16) = value as u16,
                         funct3::SW => *(addr as *mut u32) = value,
-                        _ => gracefully_crash(),
+                        _ => crash(),
                     }
                 }
 
@@ -229,10 +230,10 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                             (funct3::SLLI, funct7::BASE) => rs1_val << shamt,
                             (funct3::SRLI_SRAI, funct7::BASE) => rs1_val >> shamt,
                             (funct3::SRLI_SRAI, funct7::ALT) => ((rs1_val as i32) >> shamt) as u32,
-                            _ => gracefully_crash(),
+                            _ => crash(),
                         }
                     }
-                    _ => gracefully_crash(),
+                    _ => crash(),
                 };
                 bridge::write_guest_reg(rd, value);
                 vPC = vPC.wrapping_add(4);
@@ -253,7 +254,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     (funct3::SRL_SRA, funct7::ALT) => ((r1 as i32) >> shamt_r) as u32,
                     (funct3::OR, funct7::BASE) => r1 | r2,
                     (funct3::AND, funct7::BASE) => r1 & r2,
-                    _ => gracefully_crash(),
+                    _ => crash(),
                 };
                 bridge::write_guest_reg(rd, value);
                 vPC = vPC.wrapping_add(4);
@@ -262,7 +263,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 if f3 == funct3::FENCE && rd == 0 && rs1 == 0 {
                     vPC = vPC.wrapping_add(4);
                 } else {
-                    gracefully_crash();
+                    crash();
                 }
             }
             opcode::SYSTEM if raw == system::EBREAK => {
@@ -272,7 +273,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             }
             _ => {
                 label!(other_ebreak);
-                gracefully_crash();
+                crash();
             }
         }
     }

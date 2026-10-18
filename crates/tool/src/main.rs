@@ -82,13 +82,12 @@ fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std
     let mut entries: Vec<(&String, &usize)> = symbols.iter().collect();
     entries.sort_by_key(|(_, num)| *num);
 
-    for (sym, num) in entries {
+    for (sym, _) in entries {
         let plt_sym = format!("__sseocb_g_plt_{sym}");
         trampolines.push_str(&format!(
             ".global {plt_sym}\n\
             {plt_sym}:\n    \
-            li x31, {num}\n    \
-            j __sseocb_i_plt_call\n\n"
+            jal x31, __sseocb_i_plt_call\n\n"
         ));
 
         linker.push_str(&format!("__wrap_{sym} = {plt_sym};\n"));
