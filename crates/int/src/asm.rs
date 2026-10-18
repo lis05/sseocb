@@ -6,3 +6,9 @@ pub fn emit_ebreak() {
         asm!("ebreak", options(nomem, nostack, preserves_flags));
     }
 }
+
+#[inline(always)]
+pub fn crash() -> ! {
+    emit_ebreak();
+    loop {}
+}

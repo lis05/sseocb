@@ -7,6 +7,7 @@ pub mod int;
 
 use decompress::{ChosenDecompressor, Decompressor};
 use rv32_isa::{funct3, funct7, imm_b, imm_i, imm_j, imm_s, imm_u, mask, opcode, system};
+use asm::crash;
 
 #[macro_export]
 macro_rules! label {
@@ -41,12 +42,6 @@ fn is_addr_in_vp(addr: u32) -> bool {
     let g_vpbase = int::g_vpbase();
     let g_vpsize = int::g_vpsize();
     return g_vpbase <= addr && addr - g_vpbase < g_vpsize;
-}
-
-#[inline(always)]
-fn crash() -> ! {
-    asm::emit_ebreak();
-    loop {}
 }
 
 #[allow(non_snake_case)]
