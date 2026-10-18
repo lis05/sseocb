@@ -5,9 +5,9 @@ pub mod bridge;
 pub mod decompress;
 pub mod int;
 
+use asm::crash;
 use decompress::{ChosenDecompressor, Decompressor};
 use rv32_isa::{funct3, funct7, imm_b, imm_i, imm_j, imm_s, imm_u, mask, opcode, system};
-use asm::crash;
 
 #[macro_export]
 macro_rules! label {

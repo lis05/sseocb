@@ -57,6 +57,7 @@ pub enum Instruction {
     fence,
     ecall,
     ebreak,
+    unimp,
 }
 
 pub mod constants;
@@ -257,10 +258,11 @@ pub fn parse(raw: u32) -> Option<Instruction> {
             }
         }
 
-        // ECALL / EBREAK
+        // ECALL / EBREAK / UNIMP
         opcode::SYSTEM => match raw {
             system::ECALL => Some(Instruction::ecall),
             system::EBREAK => Some(Instruction::ebreak),
+            system::UNIMP => Some(Instruction::unimp),
             _ => None,
         },
 
@@ -378,6 +380,7 @@ impl Instruction {
             Instruction::fence => fence::FENCE,
             Instruction::ecall => system::ECALL,
             Instruction::ebreak => system::EBREAK,
+            Instruction::unimp => system::UNIMP,
         }
     }
 }
@@ -517,6 +520,7 @@ impl core::fmt::Display for Instruction {
             Instruction::fence => write!(f, "fence"),
             Instruction::ecall => write!(f, "ecall"),
             Instruction::ebreak => write!(f, "ebreak"),
+            Instruction::unimp => write!(f, "unimp"),
         }
     }
 }
@@ -1002,6 +1006,7 @@ mod tests {
 
         assert_eq!(parse(0x00000073), Some(Instruction::ecall));
         assert_eq!(parse(0x00100073), Some(Instruction::ebreak));
+        assert_eq!(parse(0xc0001073), Some(Instruction::unimp));
         // CSR or other opcode 0x73
         assert_eq!(parse(0x00001073), None);
     }
@@ -1246,6 +1251,7 @@ mod tests {
         assert_instruction_roundtrip(Instruction::fence);
         assert_instruction_roundtrip(Instruction::ecall);
         assert_instruction_roundtrip(Instruction::ebreak);
+        assert_instruction_roundtrip(Instruction::unimp);
     }
 
     #[test]
@@ -1347,5 +1353,6 @@ mod tests {
         assert_eq!(format!("{}", Instruction::fence), "fence");
         assert_eq!(format!("{}", Instruction::ecall), "ecall");
         assert_eq!(format!("{}", Instruction::ebreak), "ebreak");
+        assert_eq!(format!("{}", Instruction::unimp), "unimp");
     }
 }

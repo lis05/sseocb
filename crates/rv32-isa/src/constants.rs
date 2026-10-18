@@ -80,6 +80,7 @@ pub use funct7 as funct7s;
 pub mod system {
     pub const ECALL: u32 = 0x00000073;
     pub const EBREAK: u32 = 0x00100073;
+    pub const UNIMP: u32 = 0xc0001073;
 }
 
 pub mod fence {

@@ -377,7 +377,7 @@ fn remap_instruction(instr: &mut Instruction) -> Result<(), Box<dyn Error>> {
             remap_register(rs1)?;
             remap_register(rs2)?;
         }
-        Instruction::fence | Instruction::ecall | Instruction::ebreak => {}
+        Instruction::fence | Instruction::ecall | Instruction::ebreak | Instruction::unimp => {}
     }
     Ok(())
 }
@@ -428,7 +428,6 @@ fn run_remap(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> 
 
     for (name, offset, size) in exec_sections {
         let end = offset + size;
-        let mut warned_non_instr = false;
         let mut pos = offset;
 
         while pos + 4 <= end {
@@ -447,13 +446,11 @@ fn run_remap(input_path: &str, output_path: &str) -> Result<(), Box<dyn Error>> 
                     total_instructions_remapped += 1;
                 }
                 None => {
-                    if !warned_non_instr {
-                        eprintln!(
-                            "Warning: section '{}' contains unparseable word(s) (e.g. 0x{:08x} at file offset 0x{:08x}); leaving untouched",
-                            name, raw, pos
-                        );
-                        warned_non_instr = true;
-                    }
+                    return Err(format!(
+                        "section '{}' contains unparseable instruction word 0x{:08x} at file offset 0x{:08x}",
+                        name, raw, pos
+                    )
+                    .into());
                 }
             }
             pos += 4;
@@ -992,6 +989,10 @@ mod tests {
         let mut ebreak = Instruction::ebreak;
         remap_instruction(&mut ebreak).unwrap();
         assert_eq!(ebreak, Instruction::ebreak);
+
+        let mut unimp = Instruction::unimp;
+        remap_instruction(&mut unimp).unwrap();
+        assert_eq!(unimp, Instruction::unimp);
     }
 
     #[test]

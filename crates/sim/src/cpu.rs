@@ -214,6 +214,7 @@ impl CPU {
             Instruction::fence => {}
             Instruction::ecall => return Err(Error::Ecall),
             Instruction::ebreak => return Err(Error::Ebreak),
+            Instruction::unimp => return Err(Error::IllegalInstruction),
         }
         self.pc = self.pc.wrapping_add(4);
         Ok(())
@@ -1943,5 +1944,18 @@ mod tests {
             Err(Error::Ebreak)
         );
         assert_eq!(cpu.get_pc(), 0x2000); // PC remains at the trapped instruction
+    }
+
+    #[test]
+    fn test_cpu_execute_unimp() {
+        let mut bus = bus::Bus::new();
+        let mut cpu = CPU::new();
+        cpu.pc = 0x3000;
+
+        assert_eq!(
+            cpu.execute(Instruction::unimp, &mut bus),
+            Err(Error::IllegalInstruction)
+        );
+        assert_eq!(cpu.get_pc(), 0x3000);
     }
 }
