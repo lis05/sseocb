@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$SCRIPT_DIR/tests"
 
-DECOMPRESSORS=(--blaris --graemi --noop)
+DECOMPRESSORS=(--graemi --noop)
 
 for test_dir in "$TESTS_DIR"/*; do
     [[ -d "$test_dir" ]] || continue

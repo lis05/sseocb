@@ -9,6 +9,7 @@ pub fn emit_ebreak() {
 
 #[inline(always)]
 pub fn crash() -> ! {
+    crate::bridge::write_guest_reg(10, !0);
     emit_ebreak();
     loop {}
 }
