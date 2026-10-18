@@ -124,6 +124,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     } else {
                         bridge::native_call!(target_pc);
                         vPC = vPC.wrapping_add(4);
+                        bridge::write_guest_reg(rd, link_addr);
                     }
                 }
             }
