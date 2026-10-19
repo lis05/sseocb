@@ -205,6 +205,7 @@ SECTIONS
         "-mabi=ilp32e",
         "-mno-relax",
         "-nostdlib",
+        "-fuse-ld=lld",
         f"-Wl,-T,{config.memory_ld.resolve()}",
     ]
 

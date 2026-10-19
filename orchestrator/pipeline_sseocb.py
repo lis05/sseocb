@@ -254,6 +254,7 @@ SECTIONS
         "-mabi=ilp32",
         "-mno-relax",
         "-nostdlib",
+        "-fuse-ld=lld",
         f"-Wl,-T,{config.memory_ld.resolve()}",
         f"-Wl,-T,{board_ld.resolve()}",
     ]
@@ -377,6 +378,7 @@ SECTIONS
         "-mabi=ilp32",
         "-mno-relax",
         "-nostdlib",
+        "-fuse-ld=lld",
         f"-Wl,-T,{config.memory_ld.resolve()}",
         f"-Wl,-T,{board_ld.resolve()}",
     ]

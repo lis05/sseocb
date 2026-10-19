@@ -106,7 +106,7 @@ case "$MODE" in
         ;;
 
     guest-merge|native-merge)
-        BASE_FLAGS+=(-r)
+        BASE_FLAGS+=(-r -fuse-ld=lld)
         exec "$CLANG" "${BASE_FLAGS[@]}" "$@"
         ;;
 

@@ -686,7 +686,13 @@ fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
                 &[]
             };
 
-            let hash = fnv1a_hash(&[content, base_name.as_bytes(), file_path.as_bytes()]);
+            let offset_bytes = sym.st_value.to_le_bytes();
+            let hash = fnv1a_hash(&[
+                content,
+                base_name.as_bytes(),
+                file_path.as_bytes(),
+                &offset_bytes,
+            ]);
             let hash_hex = format!("{:016x}", hash);
             let hash_8 = &hash_hex[..8];
 
@@ -1195,6 +1201,82 @@ mod tests {
             })
             .expect("Renamed symbol not found");
         assert!(sym.is_global());
+
+        let _ = fs::remove_file(test_o);
+    }
+
+    #[test]
+    fn test_globalize_offset_differentiation() {
+        let test_o = std::env::temp_dir().join("test_globalize_offset_unit.o");
+
+        let mut builder = object::build::elf::Builder::new(object::Endianness::Little, true);
+        let shstrtab = builder.sections.add();
+        shstrtab.name = (&b".shstrtab"[..]).into();
+        shstrtab.sh_type = elf::SHT_STRTAB;
+        shstrtab.data = object::build::elf::SectionData::SectionString;
+
+        let strtab = builder.sections.add();
+        strtab.name = (&b".strtab"[..]).into();
+        strtab.sh_type = elf::SHT_STRTAB;
+        strtab.data = object::build::elf::SectionData::String;
+        let strtab_id = strtab.id();
+
+        let symtab = builder.sections.add();
+        symtab.name = (&b".symtab"[..]).into();
+        symtab.sh_type = elf::SHT_SYMTAB;
+        symtab.sh_link_section = Some(strtab_id);
+        symtab.data = object::build::elf::SectionData::Symbol;
+
+        let text = builder.sections.add();
+        text.name = (&b".text"[..]).into();
+        text.sh_type = elf::SHT_PROGBITS;
+        text.sh_flags = elf::SHF_ALLOC | elf::SHF_EXECINSTR;
+        text.sh_addralign = 4;
+        text.data = object::build::elf::SectionData::Data(
+            (&[
+                0x13, 0x00, 0x00, 0x00, 0x67, 0x80, 0x00, 0x00, // func 1 at offset 0
+                0x13, 0x00, 0x00, 0x00, 0x67, 0x80, 0x00,
+                0x00, // func 2 at offset 8 (identical)
+            ][..])
+                .into(),
+        );
+        let text_id = text.id();
+
+        let s_file = builder.symbols.add();
+        s_file.name = (&b"common.c"[..]).into();
+        s_file.set_st_info(elf::STB_LOCAL, elf::STT_FILE);
+        s_file.st_shndx = elf::SHN_ABS;
+
+        let s1 = builder.symbols.add();
+        s1.name = (&b"helper"[..]).into();
+        s1.set_st_info(elf::STB_LOCAL, elf::STT_FUNC);
+        s1.section = Some(text_id);
+        s1.st_value = 0;
+        s1.st_size = 8;
+
+        let s2 = builder.symbols.add();
+        s2.name = (&b"helper"[..]).into();
+        s2.set_st_info(elf::STB_LOCAL, elf::STT_FUNC);
+        s2.section = Some(text_id);
+        s2.st_value = 8;
+        s2.st_size = 8;
+
+        let mut buf = Vec::new();
+        builder.write(&mut buf).unwrap();
+        fs::write(&test_o, buf).unwrap();
+
+        run_globalize(test_o.to_str().unwrap()).unwrap();
+
+        let updated = fs::read(&test_o).unwrap();
+        let parsed = object::File::parse(&*updated).unwrap();
+        let names: Vec<String> = parsed
+            .symbols()
+            .filter_map(|s| s.name().ok().map(|n| n.to_string()))
+            .filter(|n| n.starts_with("__sseocb_s_common_c_") && n.ends_with("_helper"))
+            .collect();
+
+        assert_eq!(names.len(), 2);
+        assert_ne!(names[0], names[1]);
 
         let _ = fs::remove_file(test_o);
     }
