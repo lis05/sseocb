@@ -255,6 +255,9 @@ SECTIONS
         "-mno-relax",
         "-nostdlib",
         "-fuse-ld=lld",
+        "-u",
+        config.entry,
+        "-Wl,--gc-sections",
         f"-Wl,-T,{config.memory_ld.resolve()}",
         f"-Wl,-T,{board_ld.resolve()}",
     ]
