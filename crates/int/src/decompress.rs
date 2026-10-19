@@ -2,26 +2,31 @@ use crate::asm;
 use crate::int;
 
 pub trait Decompressor {
-    fn decompress_u32(vp_offset: u32) -> u32;
+    fn decompress(vp_offset: u32, buf: &mut [u8]);
 }
 
 #[inline(always)]
-pub fn is_u32_inside_vp(vp_offset: u32) -> bool {
-    vp_offset <= int::g_vpsize() - 4 && (vp_offset & 3) == 0
+pub fn is_slice_inside_vp(vp_offset: u32, len: usize) -> bool {
+    let vpsize = int::g_vpsize() as usize;
+    (vp_offset as usize)
+        .checked_add(len)
+        .is_some_and(|end| end <= vpsize)
 }
 
 // Noop implementation of D() which works with uncompressed vP.
 pub struct NoopDecompressor;
 
 impl Decompressor for NoopDecompressor {
-    fn decompress_u32(vp_offset: u32) -> u32 {
-        if !is_u32_inside_vp(vp_offset) {
+    fn decompress(vp_offset: u32, buf: &mut [u8]) {
+        if !is_slice_inside_vp(vp_offset, buf.len()) {
             asm::emit_ebreak();
             loop {}
         }
 
-        let ptr = (int::i_vpbase() as usize + vp_offset as usize) as *const u32;
-        unsafe { *ptr }
+        let ptr = (int::i_vpbase() as usize + vp_offset as usize) as *const u8;
+        unsafe {
+            core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), buf.len());
+        }
     }
 }
 
@@ -34,8 +39,8 @@ pub struct BlarisDecompressor;
 #[cfg(feature = "blaris-dec")]
 impl Decompressor for BlarisDecompressor {
     #[unsafe(link_section = ".__sseocb_i.decompressor")]
-    fn decompress_u32(vp_offset: u32) -> u32 {
-        if !is_u32_inside_vp(vp_offset) {
+    fn decompress(vp_offset: u32, buf: &mut [u8]) {
+        if !is_slice_inside_vp(vp_offset, buf.len()) {
             asm::emit_ebreak();
             loop {}
         }
@@ -45,14 +50,11 @@ impl Decompressor for BlarisDecompressor {
         let len = (end as usize).saturating_sub(base as usize);
         let from = unsafe { core::slice::from_raw_parts(base, len) };
 
-        let mut buf = [0u8; 4];
-        let ok = blaris_decompress::decompress::decompress(from, &mut buf, vp_offset as usize);
+        let ok = blaris_decompress::decompress::decompress(from, buf, vp_offset as usize);
         if !ok {
             asm::emit_ebreak();
             loop {}
         }
-
-        u32::from_le_bytes(buf)
     }
 }
 
@@ -65,8 +67,8 @@ pub struct GraemiDecompressor;
 #[cfg(feature = "graemi-dec")]
 impl Decompressor for GraemiDecompressor {
     #[unsafe(link_section = ".__sseocb_i.decompressor")]
-    fn decompress_u32(vp_offset: u32) -> u32 {
-        if !is_u32_inside_vp(vp_offset) {
+    fn decompress(vp_offset: u32, buf: &mut [u8]) {
+        if !is_slice_inside_vp(vp_offset, buf.len()) {
             asm::emit_ebreak();
             loop {}
         }
@@ -76,14 +78,11 @@ impl Decompressor for GraemiDecompressor {
         let len = (end as usize).saturating_sub(base as usize);
         let from = unsafe { core::slice::from_raw_parts(base, len) };
 
-        let mut buf = [0u8; 4];
-        let ok = graemi_decompress::decompress(from, &mut buf, vp_offset as usize);
+        let ok = graemi_decompress::decompress(from, buf, vp_offset as usize);
         if !ok {
             asm::emit_ebreak();
             loop {}
         }
-
-        u32::from_le_bytes(buf)
     }
 }
 

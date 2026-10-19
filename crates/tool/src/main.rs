@@ -73,7 +73,8 @@ fn get_addressable_symbols(
 
 fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std::io::Result<()> {
     let mut trampolines = String::from(
-        ".section .__sseocb_g.text.plt, \"ax\", @progbits\n.p2align 2\n\
+        ".option norvc\n\
+        .section .__sseocb_g.text.plt, \"ax\", @progbits\n.p2align 2\n\
         .globl __sseocb_i_trampolines\n__sseocb_i_trampolines:\n\n",
     );
     let mut linker = String::new();

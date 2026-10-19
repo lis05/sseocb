@@ -34,7 +34,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 fn is_instr_in_vp(addr: u32) -> bool {
     let g_vpbase = int::g_vpbase();
     let g_vpsize = int::g_vpsize();
-    return (addr & 3) == 0 && g_vpbase <= addr && addr - g_vpbase < g_vpsize;
+    return (addr & 1) == 0 && g_vpbase <= addr && addr - g_vpbase < g_vpsize;
 }
 
 #[inline(always)]
@@ -48,7 +48,21 @@ fn is_addr_in_vp(addr: u32) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
     loop {
-        let raw = ChosenDecompressor::decompress_u32(vPC);
+        let mut half = [0u8; 2];
+        ChosenDecompressor::decompress(vPC, &mut half);
+        let (raw, step) = if rv32_isa::is_compressed(half[0]) {
+            let raw16 = u16::from_le_bytes(half);
+            let Some(expanded) = rv32_isa::expand_compressed(raw16) else {
+                label!(rvc_ebreak);
+                crash();
+            };
+            (expanded, 2u32)
+        } else {
+            let mut hi = [0u8; 2];
+            ChosenDecompressor::decompress(vPC.wrapping_add(2), &mut hi);
+            let raw32 = u32::from_le_bytes([half[0], half[1], hi[0], hi[1]]);
+            (raw32, 4u32)
+        };
 
         let op = rv32_isa::opcode(raw);
         let f3 = rv32_isa::funct3(raw);
@@ -65,7 +79,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 let imm = imm_u(raw);
 
                 bridge::write_guest_reg(rd, imm as u32);
-                vPC = vPC.wrapping_add(4);
+                vPC = vPC.wrapping_add(step);
             }
             opcode::AUIPC => {
                 label!(auipc);
@@ -73,13 +87,13 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
 
                 let guest_pc = int::g_vpbase().wrapping_add(vPC);
                 bridge::write_guest_reg(rd, guest_pc.wrapping_add_signed(imm));
-                vPC = vPC.wrapping_add(4);
+                vPC = vPC.wrapping_add(step);
             }
             opcode::JAL => {
                 label!(jal);
                 let imm = imm_j(raw);
 
-                let link_addr = int::g_vpbase().wrapping_add(vPC).wrapping_add(4);
+                let link_addr = int::g_vpbase().wrapping_add(vPC).wrapping_add(step);
                 bridge::write_guest_reg(rd, link_addr);
 
                 let target_pc = int::g_vpbase().wrapping_add(vPC).wrapping_add_signed(imm);
@@ -108,7 +122,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     return;
                 }
 
-                let link_addr = int::g_vpbase().wrapping_add(vPC).wrapping_add(4);
+                let link_addr = int::g_vpbase().wrapping_add(vPC).wrapping_add(step);
                 bridge::write_guest_reg(rd, link_addr);
 
                 if is_instr_in_vp(target_pc) {
@@ -118,7 +132,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                         vPC = bridge::get_trampoline_vp_offset(target_pc);
                     } else {
                         bridge::native_call!(target_pc);
-                        vPC = vPC.wrapping_add(4);
+                        vPC = vPC.wrapping_add(step);
                         bridge::write_guest_reg(rd, link_addr);
                     }
                 }
@@ -150,7 +164,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                         crash();
                     }
                 } else {
-                    vPC = vPC.wrapping_add(4);
+                    vPC = vPC.wrapping_add(step);
                 }
             }
             opcode::LOAD => {
@@ -175,7 +189,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                 };
 
                 bridge::write_guest_reg(rd, value);
-                vPC = vPC.wrapping_add(4);
+                vPC = vPC.wrapping_add(step);
             }
             opcode::STORE => {
                 label!(store);
@@ -197,7 +211,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     }
                 }
 
-                vPC = vPC.wrapping_add(4);
+                vPC = vPC.wrapping_add(step);
             }
             opcode::OP_IMM => {
                 let rs1_val = bridge::read_guest_reg(rs1);
@@ -232,7 +246,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     _ => crash(),
                 };
                 bridge::write_guest_reg(rd, value);
-                vPC = vPC.wrapping_add(4);
+                vPC = vPC.wrapping_add(step);
             }
             opcode::OP => {
                 label!(reg);
@@ -253,11 +267,11 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
                     _ => crash(),
                 };
                 bridge::write_guest_reg(rd, value);
-                vPC = vPC.wrapping_add(4);
+                vPC = vPC.wrapping_add(step);
             }
             opcode::FENCE => {
                 if f3 == funct3::FENCE && rd == 0 && rs1 == 0 {
-                    vPC = vPC.wrapping_add(4);
+                    vPC = vPC.wrapping_add(step);
                 } else {
                     crash();
                 }
@@ -265,7 +279,7 @@ pub extern "C" fn __sseocb_i_main(mut vPC: u32) {
             opcode::SYSTEM if raw == system::EBREAK => {
                 label!(ebreak_ebreak);
                 asm::emit_ebreak();
-                vPC = vPC.wrapping_add(4);
+                vPC = vPC.wrapping_add(step);
             }
             _ => {
                 label!(other_ebreak);

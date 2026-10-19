@@ -1,3 +1,4 @@
+.option norvc
 .section __sseocb_i.bridge, "ax", @progbits
 
 # int operates in the top half of rv32i registers (x0, x16..x31) where it sees
