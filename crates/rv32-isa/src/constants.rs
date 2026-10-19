@@ -106,3 +106,32 @@ pub mod shift {
     pub const SHAMT: u32 = 20;
     pub const FUNCT7: u32 = 25;
 }
+
+pub mod rvc {
+    pub const OP_C0: u16 = 0b00;
+    pub const OP_C1: u16 = 0b01;
+    pub const OP_C2: u16 = 0b10;
+
+    pub mod funct3 {
+        // Quadrant 0
+        pub const ADDI4SPN: u16 = 0b000;
+        pub const LW: u16 = 0b010;
+        pub const SW: u16 = 0b110;
+
+        // Quadrant 1
+        pub const ADDI: u16 = 0b000;
+        pub const JAL: u16 = 0b001;
+        pub const LI: u16 = 0b010;
+        pub const LUI_ADDI16SP: u16 = 0b011;
+        pub const MISC_ALU: u16 = 0b100;
+        pub const J: u16 = 0b101;
+        pub const BEQZ: u16 = 0b110;
+        pub const BNEZ: u16 = 0b111;
+
+        // Quadrant 2
+        pub const SLLI: u16 = 0b000;
+        pub const LWSP: u16 = 0b010;
+        pub const JR_MV_EBREAK_JALR_ADD: u16 = 0b100;
+        pub const SWSP: u16 = 0b110;
+    }
+}

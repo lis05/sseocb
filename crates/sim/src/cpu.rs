@@ -55,22 +55,43 @@ impl CPU {
         }
     }
 
-    pub fn fetch(&self, bus: &bus::Bus) -> Result<Instruction> {
-        if self.pc & 0x3 != 0 {
+    pub fn fetch_with_step(&self, bus: &bus::Bus) -> Result<(Instruction, u32)> {
+        if self.pc & 0x1 != 0 {
             return Err(Error::IllegalInstruction);
         }
-        let raw = bus.read_u32(self.pc, Permissions::RX)?;
-        let instr = instruction::parse(raw).ok_or(Error::IllegalInstruction)?;
-        Ok(instr)
+        let low16 = bus.read_u16(self.pc, Permissions::RX)?;
+        let (raw32, step) = if instruction::is_compressed(low16 as u8) {
+            let raw32 = instruction::expand_compressed(low16).ok_or(Error::IllegalInstruction)?;
+            (raw32, 2)
+        } else {
+            let high16 = bus.read_u16(self.pc.wrapping_add(2), Permissions::RX)?;
+            let raw32 = (low16 as u32) | ((high16 as u32) << 16);
+            (raw32, 4)
+        };
+        let instr = instruction::parse(raw32).ok_or(Error::IllegalInstruction)?;
+        Ok((instr, step))
+    }
+
+    pub fn fetch(&self, bus: &bus::Bus) -> Result<Instruction> {
+        self.fetch_with_step(bus).map(|(instr, _)| instr)
     }
 
     pub fn step(&mut self, bus: &mut bus::Bus) -> Result<Instruction> {
-        let instr = self.fetch(bus)?;
-        self.execute(instr, bus)?;
+        let (instr, step) = self.fetch_with_step(bus)?;
+        self.execute_with_step(instr, step, bus)?;
         Ok(instr)
     }
 
     pub fn execute(&mut self, instr: Instruction, bus: &mut bus::Bus) -> Result<()> {
+        self.execute_with_step(instr, 4, bus)
+    }
+
+    pub fn execute_with_step(
+        &mut self,
+        instr: Instruction,
+        step: u32,
+        bus: &mut bus::Bus,
+    ) -> Result<()> {
         match instr {
             Instruction::lui { rd, imm } => {
                 self.write_reg(rd, imm as Register);
@@ -86,10 +107,10 @@ impl CPU {
                     }
                     _ => unreachable!(),
                 };
-                if target & 0x3 != 0 {
+                if target & 0x1 != 0 {
                     return Err(Error::IllegalInstruction);
                 }
-                self.write_reg(rd, self.pc.wrapping_add(4));
+                self.write_reg(rd, self.pc.wrapping_add(step));
                 self.pc = target;
                 return Ok(());
             }
@@ -113,7 +134,7 @@ impl CPU {
 
                 if taken {
                     let target = self.pc.wrapping_add_signed(imm);
-                    if target & 0x3 != 0 {
+                    if target & 0x1 != 0 {
                         return Err(Error::IllegalInstruction);
                     }
                     self.pc = target;
@@ -216,7 +237,7 @@ impl CPU {
             Instruction::ebreak => return Err(Error::Ebreak),
             Instruction::unimp => return Err(Error::IllegalInstruction),
         }
-        self.pc = self.pc.wrapping_add(4);
+        self.pc = self.pc.wrapping_add(step);
         Ok(())
     }
 }
@@ -417,9 +438,14 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.pc = 0x1000;
 
-        // Misaligned offset (not multiple of 4)
-        let instr = Instruction::jal { rd: 1, imm: 2 };
+        // Misaligned offset (not 2-byte aligned)
+        let instr = Instruction::jal { rd: 1, imm: 1 };
         assert_eq!(cpu.execute(instr, &mut bus), Err(Error::IllegalInstruction));
+
+        // 2-byte aligned offset is legal with C extension
+        let instr = Instruction::jal { rd: 1, imm: 2 };
+        assert!(cpu.execute(instr, &mut bus).is_ok());
+        assert_eq!(cpu.get_pc(), 0x1002);
     }
 
     #[test]
@@ -468,13 +494,14 @@ mod tests {
         cpu.pc = 0x1000;
         cpu.write_reg(2, 0x2000);
 
-        // Target: (0x2000 + 2) & !1 = 0x2002 (not 4-byte aligned)
+        // Target: (0x2000 + 2) & !1 = 0x2002 (legal 2-byte aligned address with C extension)
         let instr = Instruction::jalr {
             rd: 1,
             rs1: 2,
             imm: 2,
         };
-        assert_eq!(cpu.execute(instr, &mut bus), Err(Error::IllegalInstruction));
+        assert!(cpu.execute(instr, &mut bus).is_ok());
+        assert_eq!(cpu.get_pc(), 0x2002);
     }
 
     #[test]
@@ -631,24 +658,34 @@ mod tests {
         cpu.write_reg(1, 10);
         cpu.write_reg(2, 20);
 
-        // Not taken branch with unaligned imm (2): must NOT error
+        // Not taken branch with unaligned imm (1): must NOT error
         cpu.pc = 0x1000;
         let not_taken = Instruction::beq {
             rs1: 1,
             rs2: 2,
-            imm: 2,
+            imm: 1,
         };
         assert!(cpu.execute(not_taken, &mut bus).is_ok());
         assert_eq!(cpu.get_pc(), 0x1004);
 
-        // Taken branch with unaligned imm (2): MUST error
+        // Taken branch with unaligned imm (1): MUST error
         cpu.pc = 0x1000;
         let taken = Instruction::bne {
             rs1: 1,
             rs2: 2,
-            imm: 2,
+            imm: 1,
         };
         assert_eq!(cpu.execute(taken, &mut bus), Err(Error::IllegalInstruction));
+
+        // Taken branch with 2-byte aligned imm (2): MUST succeed with C extension
+        cpu.pc = 0x1000;
+        let taken_aligned = Instruction::bne {
+            rs1: 1,
+            rs2: 2,
+            imm: 2,
+        };
+        assert!(cpu.execute(taken_aligned, &mut bus).is_ok());
+        assert_eq!(cpu.get_pc(), 0x1002);
     }
 
     #[test]
@@ -1957,5 +1994,162 @@ mod tests {
             Err(Error::IllegalInstruction)
         );
         assert_eq!(cpu.get_pc(), 0x3000);
+    }
+
+    #[test]
+    fn test_cpu_execute_compressed_step_and_pc() {
+        let mut bus = bus::Bus::new();
+        // Memory content at 0x1000:
+        // 0x0001 (c.nop, 2 bytes)
+        // 0x0515 (c.addi a0, 5, 2 bytes) [raw16 = 0x0515: rd=10, imm=5]
+        // 0x00a50593 (addi a1, a0, 10, 4 bytes)
+        // 0x862e (c.mv a2, a1, 2 bytes)
+        // 0x952e (c.add a0, a0, a1, 2 bytes)
+        // 0x8d0d (c.sub a0, a0, a2, 2 bytes)
+        let mut code = Vec::new();
+        code.extend_from_slice(&0x0001u16.to_le_bytes()); // c.nop
+        code.extend_from_slice(&0x0515u16.to_le_bytes()); // c.addi a0, 5
+        code.extend_from_slice(&0x00a50593u32.to_le_bytes()); // addi a1, a0, 10
+        code.extend_from_slice(&0x862eu16.to_le_bytes()); // c.mv a2, a1
+        code.extend_from_slice(&0x952eu16.to_le_bytes()); // c.add a0, a1
+        code.extend_from_slice(&0x8d0du16.to_le_bytes()); // c.sub a0, a2
+        let region = Region::new("FLASH", 0x1000, Permissions::RX, code);
+        bus.add(region).unwrap();
+
+        let mut cpu = CPU::new();
+        cpu.set_pc(0x1000);
+
+        // 1. c.nop: PC advances by 2 to 0x1002
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1002);
+
+        // 2. c.addi a0, 5: PC advances by 2 to 0x1004, a0 = 5
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1004);
+        assert_eq!(cpu.read_reg(10), 5);
+
+        // 3. addi a1, a0, 10 (32-bit): PC advances by 4 to 0x1008, a1 = 15
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1008);
+        assert_eq!(cpu.read_reg(11), 15);
+
+        // 4. c.mv a2, a1: PC advances by 2 to 0x100a, a2 = 15
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x100a);
+        assert_eq!(cpu.read_reg(12), 15);
+
+        // 5. c.add a0, a1: PC advances by 2 to 0x100c, a0 = 5 + 15 = 20
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x100c);
+        assert_eq!(cpu.read_reg(10), 20);
+
+        // 6. c.sub a0, a2: PC advances by 2 to 0x100e, a0 = 20 - 15 = 5
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x100e);
+        assert_eq!(cpu.read_reg(10), 5);
+    }
+
+    #[test]
+    fn test_cpu_execute_compressed_jumps_and_branches() {
+        let mut bus = bus::Bus::new();
+        let mut cpu = CPU::new();
+        cpu.set_pc(0x1000);
+
+        // Test c.j execution: c.j +6 from 0x1000 -> target 0x1006
+        let c_j_instr = instruction::expand_compressed_to_instruction(0xa019).unwrap(); // c.j +6
+        cpu.execute_with_step(c_j_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1006);
+        assert_eq!(cpu.read_reg(1), 0); // x1 untouched by c.j
+
+        // Test c.jal execution: c.jal +8 from 0x1006 -> target 0x100e, x1 = 0x1006 + 2 = 0x1008
+        let c_jal_instr = instruction::expand_compressed_to_instruction(0x2021).unwrap(); // c.jal +8
+        cpu.execute_with_step(c_jal_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x100e);
+        assert_eq!(cpu.read_reg(1), 0x1008);
+
+        // Test c.jr execution: c.jr a0 from 0x100e, a0 = 0x2000 -> target 0x2000, x1 untouched
+        cpu.write_reg(10, 0x2000);
+        let c_jr_instr = instruction::expand_compressed_to_instruction(0x8502).unwrap(); // c.jr a0
+        cpu.execute_with_step(c_jr_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x2000);
+        assert_eq!(cpu.read_reg(1), 0x1008);
+
+        // Test c.jalr execution: c.jalr a0 from 0x2000, a0 = 0x3000 -> target 0x3000, x1 = 0x2000 + 2 = 0x2002
+        cpu.write_reg(10, 0x3000);
+        let c_jalr_instr = instruction::expand_compressed_to_instruction(0x9502).unwrap(); // c.jalr a0
+        cpu.execute_with_step(c_jalr_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x3000);
+        assert_eq!(cpu.read_reg(1), 0x2002);
+
+        // Test c.beqz:
+        // When a0 == 0: taken -> target 0x1000 + 8 = 0x1008
+        cpu.set_pc(0x1000);
+        cpu.write_reg(10, 0);
+        let c_beqz_instr = instruction::expand_compressed_to_instruction(0xc501).unwrap(); // c.beqz a0, 8
+        cpu.execute_with_step(c_beqz_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1008);
+
+        // When a0 != 0: not taken -> advances by step (2) to 0x1002
+        cpu.set_pc(0x1000);
+        cpu.write_reg(10, 42);
+        cpu.execute_with_step(c_beqz_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1002);
+
+        // Test c.bnez:
+        let c_bnez_instr = instruction::expand_compressed_to_instruction(0xe501).unwrap(); // c.bnez a0, 8
+        cpu.set_pc(0x1000);
+        cpu.write_reg(10, 42);
+        cpu.execute_with_step(c_bnez_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1008);
+
+        cpu.set_pc(0x1000);
+        cpu.write_reg(10, 0);
+        cpu.execute_with_step(c_bnez_instr, 2, &mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1002);
+    }
+
+    #[test]
+    fn test_cpu_execute_uncompressed_at_odd_halfword() {
+        let mut bus = bus::Bus::new();
+        // 0x1000: c.nop (2 bytes)
+        // 0x1002: addi a0, x0, 42 (4 bytes at pc % 4 == 2!)
+        // 0x1006: c.nop (2 bytes)
+        let mut code = Vec::new();
+        code.extend_from_slice(&0x0001u16.to_le_bytes()); // c.nop
+        code.extend_from_slice(&0x02a00513u32.to_le_bytes()); // addi a0, x0, 42
+        code.extend_from_slice(&0x0001u16.to_le_bytes()); // c.nop
+        let region = Region::new("FLASH", 0x1000, Permissions::RX, code);
+        bus.add(region).unwrap();
+
+        let mut cpu = CPU::new();
+        cpu.set_pc(0x1000);
+
+        // Step 1: executes c.nop, advances to 0x1002
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1002);
+
+        // Step 2: executes 32-bit addi at non-4-byte aligned 0x1002!
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1006);
+        assert_eq!(cpu.read_reg(10), 42);
+
+        // Step 3: executes c.nop, advances to 0x1008
+        cpu.step(&mut bus).unwrap();
+        assert_eq!(cpu.get_pc(), 0x1008);
+    }
+
+    #[test]
+    fn test_cpu_execute_compressed_ebreak() {
+        let mut bus = bus::Bus::new();
+        let mut code = Vec::new();
+        code.extend_from_slice(&0x9002u16.to_le_bytes()); // c.ebreak
+        let region = Region::new("FLASH", 0x1000, Permissions::RX, code);
+        bus.add(region).unwrap();
+
+        let mut cpu = CPU::new();
+        cpu.set_pc(0x1000);
+
+        assert_eq!(cpu.step(&mut bus), Err(Error::Ebreak));
+        assert_eq!(cpu.get_pc(), 0x1000);
     }
 }

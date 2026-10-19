@@ -129,6 +129,337 @@ pub const fn imm_s(raw: u32) -> i32 {
     ((raw as i32 >> 25) << 5) | (((raw >> 7) & 0x1F) as i32)
 }
 
+#[inline(always)]
+pub const fn is_compressed(first_byte: u8) -> bool {
+    (first_byte & 0b11) != 0b11
+}
+
+#[inline(always)]
+const fn r_prime(r: u16) -> usize {
+    8 + ((r & 0x7) as usize)
+}
+
+pub fn expand_compressed(raw: u16) -> Option<u32> {
+    let op = raw & 0x3;
+    let funct3 = (raw >> 13) & 0x7;
+
+    match op {
+        // Quadrant 0 (0b00)
+        rvc::OP_C0 => match funct3 {
+            rvc::funct3::ADDI4SPN => {
+                let rd = r_prime(raw >> 2);
+                let nzuimm = (((raw >> 7) & 0xF) << 6)
+                    | (((raw >> 11) & 0x3) << 4)
+                    | (((raw >> 5) & 0x1) << 3)
+                    | (((raw >> 6) & 0x1) << 2);
+                if nzuimm == 0 {
+                    return None;
+                }
+                Some(encode_i(opcode::OP_IMM, rd, funct3::ADDI, 2, nzuimm as i32))
+            }
+            rvc::funct3::LW => {
+                let rd = r_prime(raw >> 2);
+                let rs1 = r_prime(raw >> 7);
+                let uimm = (((raw >> 5) & 0x1) << 6)
+                    | (((raw >> 10) & 0x7) << 3)
+                    | (((raw >> 6) & 0x1) << 2);
+                Some(encode_i(opcode::LOAD, rd, funct3::LW, rs1, uimm as i32))
+            }
+            rvc::funct3::SW => {
+                let rs2 = r_prime(raw >> 2);
+                let rs1 = r_prime(raw >> 7);
+                let uimm = (((raw >> 5) & 0x1) << 6)
+                    | (((raw >> 10) & 0x7) << 3)
+                    | (((raw >> 6) & 0x1) << 2);
+                Some(encode_s(opcode::STORE, funct3::SW, rs1, rs2, uimm as i32))
+            }
+            _ => None,
+        },
+
+        // Quadrant 1 (0b01)
+        rvc::OP_C1 => match funct3 {
+            rvc::funct3::ADDI => {
+                let rd = ((raw >> 7) & 0x1F) as usize;
+                let raw_imm = (((raw >> 12) & 0x1) << 5) | ((raw >> 2) & 0x1F);
+                let imm = ((raw_imm as i32) << 26) >> 26;
+                Some(encode_i(opcode::OP_IMM, rd, funct3::ADDI, rd, imm))
+            }
+            rvc::funct3::JAL => {
+                let o11 = (raw >> 12) & 1;
+                let o4 = (raw >> 11) & 1;
+                let o9_8 = (raw >> 9) & 0x3;
+                let o10 = (raw >> 8) & 1;
+                let o6 = (raw >> 7) & 1;
+                let o7 = (raw >> 6) & 1;
+                let o3_1 = (raw >> 3) & 0x7;
+                let o5 = (raw >> 2) & 1;
+                let raw_offset = (o11 << 11)
+                    | (o10 << 10)
+                    | (o9_8 << 8)
+                    | (o7 << 7)
+                    | (o6 << 6)
+                    | (o5 << 5)
+                    | (o4 << 4)
+                    | (o3_1 << 1);
+                let offset = ((raw_offset as i32) << 20) >> 20;
+                Some(encode_j(opcode::JAL, 1, offset))
+            }
+            rvc::funct3::LI => {
+                let rd = ((raw >> 7) & 0x1F) as usize;
+                if rd == 0 {
+                    return None;
+                }
+                let raw_imm = (((raw >> 12) & 0x1) << 5) | ((raw >> 2) & 0x1F);
+                let imm = ((raw_imm as i32) << 26) >> 26;
+                Some(encode_i(opcode::OP_IMM, rd, funct3::ADDI, 0, imm))
+            }
+            rvc::funct3::LUI_ADDI16SP => {
+                let rd = ((raw >> 7) & 0x1F) as usize;
+                if rd == 2 {
+                    // C.ADDI16SP
+                    let o9 = (raw >> 12) & 1;
+                    let o4 = (raw >> 6) & 1;
+                    let o6 = (raw >> 5) & 1;
+                    let o8_7 = (raw >> 3) & 0x3;
+                    let o5 = (raw >> 2) & 1;
+                    let raw_imm = (o9 << 9) | (o8_7 << 7) | (o6 << 6) | (o5 << 5) | (o4 << 4);
+                    let imm = ((raw_imm as i32) << 22) >> 22;
+                    if imm == 0 {
+                        return None;
+                    }
+                    Some(encode_i(opcode::OP_IMM, 2, funct3::ADDI, 2, imm))
+                } else if rd != 0 {
+                    // C.LUI
+                    let o17 = ((raw >> 12) & 1) as u32;
+                    let o16_12 = ((raw >> 2) & 0x1F) as u32;
+                    let raw_imm = (o17 << 17) | (o16_12 << 12);
+                    let imm = ((raw_imm as i32) << 14) >> 14;
+                    if imm == 0 {
+                        return None;
+                    }
+                    Some(encode_u(opcode::LUI, rd, imm))
+                } else {
+                    None
+                }
+            }
+            rvc::funct3::MISC_ALU => {
+                let subop = (raw >> 10) & 0x3;
+                let rs1 = r_prime(raw >> 7);
+                match subop {
+                    0b00 => {
+                        let shamt5 = (raw >> 12) & 1;
+                        if shamt5 != 0 {
+                            return None;
+                        }
+                        let shamt = ((raw >> 2) & 0x1F) as u32;
+                        Some(encode_i_shift(
+                            opcode::OP_IMM,
+                            rs1,
+                            funct3::SRLI,
+                            rs1,
+                            shamt,
+                            funct7::BASE,
+                        ))
+                    }
+                    0b01 => {
+                        let shamt5 = (raw >> 12) & 1;
+                        if shamt5 != 0 {
+                            return None;
+                        }
+                        let shamt = ((raw >> 2) & 0x1F) as u32;
+                        Some(encode_i_shift(
+                            opcode::OP_IMM,
+                            rs1,
+                            funct3::SRAI,
+                            rs1,
+                            shamt,
+                            funct7::ALT,
+                        ))
+                    }
+                    0b10 => {
+                        let raw_imm = (((raw >> 12) & 0x1) << 5) | ((raw >> 2) & 0x1F);
+                        let imm = ((raw_imm as i32) << 26) >> 26;
+                        Some(encode_i(opcode::OP_IMM, rs1, funct3::ANDI, rs1, imm))
+                    }
+                    0b11 => {
+                        let bit12 = (raw >> 12) & 1;
+                        if bit12 != 0 {
+                            return None;
+                        }
+                        let funct2 = (raw >> 5) & 0x3;
+                        let rs2 = r_prime(raw >> 2);
+                        match funct2 {
+                            0b00 => Some(encode_r(
+                                opcode::OP,
+                                rs1,
+                                funct3::SUB,
+                                rs1,
+                                rs2,
+                                funct7::ALT,
+                            )),
+                            0b01 => Some(encode_r(
+                                opcode::OP,
+                                rs1,
+                                funct3::XOR,
+                                rs1,
+                                rs2,
+                                funct7::BASE,
+                            )),
+                            0b10 => Some(encode_r(
+                                opcode::OP,
+                                rs1,
+                                funct3::OR,
+                                rs1,
+                                rs2,
+                                funct7::BASE,
+                            )),
+                            0b11 => Some(encode_r(
+                                opcode::OP,
+                                rs1,
+                                funct3::AND,
+                                rs1,
+                                rs2,
+                                funct7::BASE,
+                            )),
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            rvc::funct3::J => {
+                let o11 = (raw >> 12) & 1;
+                let o4 = (raw >> 11) & 1;
+                let o9_8 = (raw >> 9) & 0x3;
+                let o10 = (raw >> 8) & 1;
+                let o6 = (raw >> 7) & 1;
+                let o7 = (raw >> 6) & 1;
+                let o3_1 = (raw >> 3) & 0x7;
+                let o5 = (raw >> 2) & 1;
+                let raw_offset = (o11 << 11)
+                    | (o10 << 10)
+                    | (o9_8 << 8)
+                    | (o7 << 7)
+                    | (o6 << 6)
+                    | (o5 << 5)
+                    | (o4 << 4)
+                    | (o3_1 << 1);
+                let offset = ((raw_offset as i32) << 20) >> 20;
+                Some(encode_j(opcode::JAL, 0, offset))
+            }
+            rvc::funct3::BEQZ => {
+                let rs1 = r_prime(raw >> 7);
+                let o8 = (raw >> 12) & 1;
+                let o4_3 = (raw >> 10) & 0x3;
+                let o7_6 = (raw >> 5) & 0x3;
+                let o2_1 = (raw >> 3) & 0x3;
+                let o5 = (raw >> 2) & 1;
+                let raw_offset = (o8 << 8) | (o7_6 << 6) | (o5 << 5) | (o4_3 << 3) | (o2_1 << 1);
+                let offset = ((raw_offset as i32) << 23) >> 23;
+                Some(encode_b(opcode::BRANCH, funct3::BEQ, rs1, 0, offset))
+            }
+            rvc::funct3::BNEZ => {
+                let rs1 = r_prime(raw >> 7);
+                let o8 = (raw >> 12) & 1;
+                let o4_3 = (raw >> 10) & 0x3;
+                let o7_6 = (raw >> 5) & 0x3;
+                let o2_1 = (raw >> 3) & 0x3;
+                let o5 = (raw >> 2) & 1;
+                let raw_offset = (o8 << 8) | (o7_6 << 6) | (o5 << 5) | (o4_3 << 3) | (o2_1 << 1);
+                let offset = ((raw_offset as i32) << 23) >> 23;
+                Some(encode_b(opcode::BRANCH, funct3::BNE, rs1, 0, offset))
+            }
+            _ => None,
+        },
+
+        // Quadrant 2 (0b10)
+        rvc::OP_C2 => match funct3 {
+            rvc::funct3::SLLI => {
+                let rd = ((raw >> 7) & 0x1F) as usize;
+                if rd == 0 {
+                    return None;
+                }
+                let shamt5 = (raw >> 12) & 1;
+                if shamt5 != 0 {
+                    return None;
+                }
+                let shamt = ((raw >> 2) & 0x1F) as u32;
+                Some(encode_i_shift(
+                    opcode::OP_IMM,
+                    rd,
+                    funct3::SLLI,
+                    rd,
+                    shamt,
+                    funct7::BASE,
+                ))
+            }
+            rvc::funct3::LWSP => {
+                let rd = ((raw >> 7) & 0x1F) as usize;
+                if rd == 0 {
+                    return None;
+                }
+                let uimm = (((raw >> 2) & 0x3) << 6)
+                    | (((raw >> 12) & 1) << 5)
+                    | (((raw >> 4) & 0x7) << 2);
+                Some(encode_i(opcode::LOAD, rd, funct3::LW, 2, uimm as i32))
+            }
+            rvc::funct3::JR_MV_EBREAK_JALR_ADD => {
+                let bit12 = (raw >> 12) & 1;
+                let rs1 = ((raw >> 7) & 0x1F) as usize;
+                let rs2 = ((raw >> 2) & 0x1F) as usize;
+                if bit12 == 0 {
+                    if rs2 == 0 {
+                        // C.JR
+                        if rs1 == 0 {
+                            return None;
+                        }
+                        Some(encode_i(opcode::JALR, 0, funct3::JALR, rs1, 0))
+                    } else {
+                        // C.MV
+                        if rs1 == 0 {
+                            return None;
+                        }
+                        Some(encode_r(opcode::OP, rs1, funct3::ADD, 0, rs2, funct7::BASE))
+                    }
+                } else if rs2 == 0 {
+                    if rs1 == 0 {
+                        // C.EBREAK
+                        Some(system::EBREAK)
+                    } else {
+                        // C.JALR
+                        Some(encode_i(opcode::JALR, 1, funct3::JALR, rs1, 0))
+                    }
+                } else {
+                    // C.ADD
+                    if rs1 == 0 {
+                        return None;
+                    }
+                    Some(encode_r(
+                        opcode::OP,
+                        rs1,
+                        funct3::ADD,
+                        rs1,
+                        rs2,
+                        funct7::BASE,
+                    ))
+                }
+            }
+            rvc::funct3::SWSP => {
+                let rs2 = ((raw >> 2) & 0x1F) as usize;
+                let uimm = (((raw >> 7) & 0x3) << 6) | (((raw >> 9) & 0xF) << 2);
+                Some(encode_s(opcode::STORE, funct3::SW, 2, rs2, uimm as i32))
+            }
+            _ => None,
+        },
+
+        _ => None,
+    }
+}
+
+pub fn expand_compressed_to_instruction(raw: u16) -> Option<Instruction> {
+    expand_compressed(raw).and_then(parse)
+}
+
 pub fn parse(raw: u32) -> Option<Instruction> {
     let opcode = opcode(raw);
     let funct3 = funct3(raw);
@@ -1354,5 +1685,351 @@ mod tests {
         assert_eq!(format!("{}", Instruction::ecall), "ecall");
         assert_eq!(format!("{}", Instruction::ebreak), "ebreak");
         assert_eq!(format!("{}", Instruction::unimp), "unimp");
+    }
+
+    #[test]
+    fn test_is_compressed() {
+        assert!(is_compressed(0x00));
+        assert!(is_compressed(0x01));
+        assert!(is_compressed(0x02));
+        assert!(!is_compressed(0x03)); // 0b11
+        assert!(!is_compressed(0x13)); // 0b11 (addi opcode)
+        assert!(!is_compressed(0x37)); // 0b11 (lui opcode)
+        assert!(!is_compressed(0xef)); // 0b11 (jal opcode)
+    }
+
+    #[test]
+    fn test_compressed_instructions_roundtrip() {
+        let test_cases: &[(u16, Instruction)] = &[
+            // Quadrant 0
+            (
+                0x0808,
+                Instruction::addi {
+                    rd: 10,
+                    rs1: 2,
+                    imm: 16,
+                },
+            ),
+            (
+                0x1fec,
+                Instruction::addi {
+                    rd: 11,
+                    rs1: 2,
+                    imm: 1020,
+                },
+            ),
+            (
+                0x4188,
+                Instruction::lw {
+                    rd: 10,
+                    rs1: 11,
+                    imm: 0,
+                },
+            ),
+            (
+                0x5ef0,
+                Instruction::lw {
+                    rd: 12,
+                    rs1: 13,
+                    imm: 124,
+                },
+            ),
+            (
+                0xc188,
+                Instruction::sw {
+                    rs1: 11,
+                    rs2: 10,
+                    imm: 0,
+                },
+            ),
+            (
+                0xdef0,
+                Instruction::sw {
+                    rs1: 13,
+                    rs2: 12,
+                    imm: 124,
+                },
+            ),
+            // Quadrant 1
+            (
+                0x0001,
+                Instruction::addi {
+                    rd: 0,
+                    rs1: 0,
+                    imm: 0,
+                },
+            ), // C.NOP
+            (
+                0x0505,
+                Instruction::addi {
+                    rd: 10,
+                    rs1: 10,
+                    imm: 1,
+                },
+            ),
+            (
+                0x157d,
+                Instruction::addi {
+                    rd: 10,
+                    rs1: 10,
+                    imm: -1,
+                },
+            ),
+            (0x2811, Instruction::jal { rd: 1, imm: 20 }), // C.JAL
+            (
+                0x4505,
+                Instruction::addi {
+                    rd: 10,
+                    rs1: 0,
+                    imm: 1,
+                },
+            ), // C.LI
+            (
+                0x557d,
+                Instruction::addi {
+                    rd: 10,
+                    rs1: 0,
+                    imm: -1,
+                },
+            ),
+            (
+                0x6141,
+                Instruction::addi {
+                    rd: 2,
+                    rs1: 2,
+                    imm: 16,
+                },
+            ), // C.ADDI16SP
+            (
+                0x717d,
+                Instruction::addi {
+                    rd: 2,
+                    rs1: 2,
+                    imm: -16,
+                },
+            ),
+            (0x6505, Instruction::lui { rd: 10, imm: 4096 }), // C.LUI
+            (0x757d, Instruction::lui { rd: 10, imm: -4096 }),
+            (
+                0x8105,
+                Instruction::srli {
+                    rd: 10,
+                    rs1: 10,
+                    shamt: 1,
+                },
+            ),
+            (
+                0x8505,
+                Instruction::srai {
+                    rd: 10,
+                    rs1: 10,
+                    shamt: 1,
+                },
+            ),
+            (
+                0x8905,
+                Instruction::andi {
+                    rd: 10,
+                    rs1: 10,
+                    imm: 1,
+                },
+            ),
+            (
+                0x997d,
+                Instruction::andi {
+                    rd: 10,
+                    rs1: 10,
+                    imm: -1,
+                },
+            ),
+            (
+                0x8d0d,
+                Instruction::sub {
+                    rd: 10,
+                    rs1: 10,
+                    rs2: 11,
+                },
+            ),
+            (
+                0x8d2d,
+                Instruction::xor {
+                    rd: 10,
+                    rs1: 10,
+                    rs2: 11,
+                },
+            ),
+            (
+                0x8d4d,
+                Instruction::or {
+                    rd: 10,
+                    rs1: 10,
+                    rs2: 11,
+                },
+            ),
+            (
+                0x8d6d,
+                Instruction::and {
+                    rd: 10,
+                    rs1: 10,
+                    rs2: 11,
+                },
+            ),
+            (0xa811, Instruction::jal { rd: 0, imm: 20 }), // C.J
+            (
+                0xc911,
+                Instruction::beq {
+                    rs1: 10,
+                    rs2: 0,
+                    imm: 20,
+                },
+            ), // C.BEQZ
+            (
+                0xe911,
+                Instruction::bne {
+                    rs1: 10,
+                    rs2: 0,
+                    imm: 20,
+                },
+            ), // C.BNEZ
+            // Quadrant 2
+            (
+                0x0506,
+                Instruction::slli {
+                    rd: 10,
+                    rs1: 10,
+                    shamt: 1,
+                },
+            ),
+            (
+                0x4502,
+                Instruction::lw {
+                    rd: 10,
+                    rs1: 2,
+                    imm: 0,
+                },
+            ),
+            (
+                0x557e,
+                Instruction::lw {
+                    rd: 10,
+                    rs1: 2,
+                    imm: 252,
+                },
+            ),
+            (
+                0x8502,
+                Instruction::jalr {
+                    rd: 0,
+                    rs1: 10,
+                    imm: 0,
+                },
+            ), // C.JR
+            (
+                0x852e,
+                Instruction::add {
+                    rd: 10,
+                    rs1: 0,
+                    rs2: 11,
+                },
+            ), // C.MV
+            (0x9002, Instruction::ebreak), // C.EBREAK
+            (
+                0x9502,
+                Instruction::jalr {
+                    rd: 1,
+                    rs1: 10,
+                    imm: 0,
+                },
+            ), // C.JALR
+            (
+                0x952e,
+                Instruction::add {
+                    rd: 10,
+                    rs1: 10,
+                    rs2: 11,
+                },
+            ), // C.ADD
+            (
+                0xc02a,
+                Instruction::sw {
+                    rs1: 2,
+                    rs2: 10,
+                    imm: 0,
+                },
+            ),
+            (
+                0xdfaa,
+                Instruction::sw {
+                    rs1: 2,
+                    rs2: 10,
+                    imm: 252,
+                },
+            ),
+        ];
+
+        for &(raw16, expected_instr) in test_cases {
+            assert!(
+                is_compressed(raw16 as u8),
+                "raw {:#06x} should be compressed",
+                raw16
+            );
+            let expanded_instr = expand_compressed_to_instruction(raw16);
+            assert_eq!(
+                expanded_instr,
+                Some(expected_instr),
+                "Failed expanding raw {:#06x}",
+                raw16
+            );
+
+            let raw32 = expand_compressed(raw16).expect("expand_compressed failed");
+            let parsed = parse(raw32).expect("parse expanded raw32 failed");
+            assert_eq!(
+                parsed, expected_instr,
+                "Roundtrip parse failed for {:#06x} -> {:#010x}",
+                raw16, raw32
+            );
+        }
+    }
+
+    #[test]
+    fn test_compressed_reserved_and_illegal() {
+        // 0x0000 is reserved / illegal instruction
+        assert_eq!(expand_compressed(0x0000), None);
+
+        // c.addi16sp with imm == 0 (nzimm == 0 is reserved)
+        assert_eq!(expand_compressed(0x6101), None);
+
+        // c.lui with imm == 0 (nzimm == 0 is reserved)
+        assert_eq!(expand_compressed(0x6501), None);
+
+        // c.lui with rd == 0 is reserved
+        assert_eq!(expand_compressed(0x6005), None);
+
+        // c.li with rd == 0 is reserved
+        assert_eq!(expand_compressed(0x4005), None);
+
+        // c.srli with shamt[5] == 1 is reserved in RV32
+        assert_eq!(expand_compressed(0x9105), None);
+
+        // c.srai with shamt[5] == 1 is reserved in RV32
+        assert_eq!(expand_compressed(0x9505), None);
+
+        // c.slli with shamt[5] == 1 is reserved in RV32
+        assert_eq!(expand_compressed(0x1506), None);
+
+        // c.slli with rd == 0 is reserved
+        assert_eq!(expand_compressed(0x0006), None);
+
+        // c.lwsp with rd == 0 is reserved
+        assert_eq!(expand_compressed(0x4002), None);
+
+        // c.jr with rs1 == 0 is reserved
+        assert_eq!(expand_compressed(0x8002), None);
+
+        // c.mv with rd == 0 is reserved
+        assert_eq!(expand_compressed(0x802e), None);
+
+        // c.add with rd == 0 is reserved
+        assert_eq!(expand_compressed(0x902e), None);
     }
 }

@@ -1213,11 +1213,11 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                     }
                 };
 
-                for offset in -n..=n {
-                    let addr = center_addr.wrapping_add((offset * 4) as u32);
+                let count = if n == 0 { 1 } else { n.max(1) as usize };
+                let mut addr = center_addr;
+                for _ in 0..count {
                     let has_bp = breakpoints.contains(&addr);
-                    let is_curr =
-                        addr == cpu.get_pc() || (center_addr != cpu.get_pc() && offset == 0);
+                    let is_curr = addr == cpu.get_pc();
                     let prefix = match (has_bp, is_curr) {
                         (true, true) => "b>",
                         (false, true) => "->",
@@ -1231,26 +1231,80 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                     } else {
                         String::new()
                     };
-                    match bus.read_u32(addr, Permissions::RO) {
-                        Ok(raw) => match sim::instruction::parse(raw) {
-                            Some(instr) => {
-                                let annotation =
-                                    resolve_auipc_addi_annotation(addr, &instr, &bus, &symbol_list)
-                                        .unwrap_or_default();
-                                println!(
-                                    "{}{:#010x}{}: {}{}",
-                                    prefix, addr, sym_tag, instr, annotation
-                                )
+
+                    if addr & 1 != 0 {
+                        println!(
+                            "{}{:#010x}{}: <unaligned instruction address>",
+                            prefix, addr, sym_tag
+                        );
+                        break;
+                    }
+
+                    match bus.read_u16(addr, Permissions::RO) {
+                        Ok(low16) => {
+                            if sim::instruction::is_compressed(low16 as u8) {
+                                match sim::instruction::expand_compressed(low16) {
+                                    Some(raw32) => match sim::instruction::parse(raw32) {
+                                        Some(instr) => {
+                                            println!(
+                                                "{}{:#010x}{}: {}",
+                                                prefix, addr, sym_tag, instr
+                                            );
+                                        }
+                                        None => {
+                                            println!(
+                                                "{}{:#010x}{}: <unknown compressed: {:#06x}>",
+                                                prefix, addr, sym_tag, low16
+                                            );
+                                        }
+                                    },
+                                    None => {
+                                        println!(
+                                            "{}{:#010x}{}: <unknown compressed: {:#06x}>",
+                                            prefix, addr, sym_tag, low16
+                                        );
+                                    }
+                                }
+                                addr = addr.wrapping_add(2);
+                            } else {
+                                match bus.read_u16(addr.wrapping_add(2), Permissions::RO) {
+                                    Ok(high16) => {
+                                        let raw32 = (low16 as u32) | ((high16 as u32) << 16);
+                                        match sim::instruction::parse(raw32) {
+                                            Some(instr) => {
+                                                let annotation = resolve_auipc_addi_annotation(
+                                                    addr,
+                                                    &instr,
+                                                    &bus,
+                                                    &symbol_list,
+                                                )
+                                                .unwrap_or_default();
+                                                println!(
+                                                    "{}{:#010x}{}: {}{}",
+                                                    prefix, addr, sym_tag, instr, annotation
+                                                );
+                                            }
+                                            None => {
+                                                println!(
+                                                    "{}{:#010x}{}: <unknown instruction: {:#010x}>",
+                                                    prefix, addr, sym_tag, raw32
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!(
+                                            "{}{:#010x}{}: <read error: {:?}>",
+                                            prefix, addr, sym_tag, e
+                                        );
+                                    }
+                                }
+                                addr = addr.wrapping_add(4);
                             }
-                            None => {
-                                println!(
-                                    "{}{:#010x}{}: <unknown instruction: {:#010x}>",
-                                    prefix, addr, sym_tag, raw
-                                )
-                            }
-                        },
+                        }
                         Err(e) => {
                             println!("{}{:#010x}{}: <read error: {:?}>", prefix, addr, sym_tag, e);
+                            break;
                         }
                     }
                 }
@@ -1334,10 +1388,8 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
                 println!("Cycles executed: {}", cycles_executed);
             }
             "s" => {
-                if let Ok(raw) = bus.read_u32(cpu.get_pc(), Permissions::RX)
-                    && let Some(Instruction::ebreak) = sim::instruction::parse(raw)
-                {
-                    cpu.set_pc(cpu.get_pc().wrapping_add(4));
+                if let Ok((Instruction::ebreak, step)) = cpu.fetch_with_step(&bus) {
+                    cpu.set_pc(cpu.get_pc().wrapping_add(step));
                 }
                 match cpu.step(&mut bus) {
                     Ok(_) => {
@@ -1361,10 +1413,8 @@ fn execute_debug(cfg: &RunConfig) -> Result<(), String> {
             "c" => {
                 DEBUG_INTERRUPTED.store(false, Ordering::Relaxed);
                 DEBUG_RUNNING.store(true, Ordering::Relaxed);
-                if let Ok(raw) = bus.read_u32(cpu.get_pc(), Permissions::RX)
-                    && let Some(Instruction::ebreak) = sim::instruction::parse(raw)
-                {
-                    cpu.set_pc(cpu.get_pc().wrapping_add(4));
+                if let Ok((Instruction::ebreak, step)) = cpu.fetch_with_step(&bus) {
+                    cpu.set_pc(cpu.get_pc().wrapping_add(step));
                 }
                 loop {
                     if DEBUG_INTERRUPTED.load(Ordering::Relaxed) {
@@ -1411,24 +1461,68 @@ fn run_accept(path: &str) -> Result<usize, String> {
         return Err("file is empty".to_string());
     }
 
-    if bytes.len() % 4 != 0 {
+    if bytes.len() % 2 != 0 {
         return Err(format!(
-            "file size ({} bytes) is not a multiple of 4 bytes",
+            "file size ({} bytes) is not a multiple of 2 bytes",
             bytes.len()
         ));
     }
 
     let mut count = 0;
-    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
-        let raw = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        match sim::instruction::parse(raw) {
-            Some(_) => count += 1,
-            None => {
-                let offset = i * 4;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if offset + 2 > bytes.len() {
+            return Err(format!(
+                "truncated instruction at byte offset {:#010x}",
+                offset
+            ));
+        }
+        let low16 = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        if sim::instruction::is_compressed(low16 as u8) {
+            match sim::instruction::expand_compressed(low16) {
+                Some(raw32) => match sim::instruction::parse(raw32) {
+                    Some(_) => {
+                        count += 1;
+                        offset += 2;
+                    }
+                    None => {
+                        return Err(format!(
+                            "rejected instruction at byte offset {:#010x}: {:#010x}",
+                            offset, low16 as u32
+                        ));
+                    }
+                },
+                None => {
+                    return Err(format!(
+                        "rejected instruction at byte offset {:#010x}: {:#010x}",
+                        offset, low16 as u32
+                    ));
+                }
+            }
+        } else {
+            if offset + 4 > bytes.len() {
                 return Err(format!(
-                    "rejected instruction at byte offset {:#010x}: {:#010x}",
-                    offset, raw
+                    "truncated 32-bit instruction at byte offset {:#010x}",
+                    offset
                 ));
+            }
+            let raw32 = u32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]);
+            match sim::instruction::parse(raw32) {
+                Some(_) => {
+                    count += 1;
+                    offset += 4;
+                }
+                None => {
+                    return Err(format!(
+                        "rejected instruction at byte offset {:#010x}: {:#010x}",
+                        offset, raw32
+                    ));
+                }
             }
         }
     }
