@@ -40,10 +40,11 @@ def compile_rv32e_if_source(
                 out_obj.resolve(),
             ]
         else:
+            arch = "rv32ec" if config.native_c else "rv32e"
             cmd = [
                 toolchain.clang,
                 "--target=riscv32",
-                "-march=rv32e",
+                f"-march={arch}",
                 "-mabi=ilp32e",
                 "-mno-relax",
                 "-ffreestanding",
@@ -75,17 +76,19 @@ def build_native(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
     )
 
 
-    # 1. Promote guest.o to rv32e
-    guest_promoted = out / "guest-promoted-rv32e.o"
+    native_arch = "rv32ec" if config.native_c else "rv32e"
+
+    # 1. Promote guest.o to rv32ec
+    guest_promoted = out / "guest-promoted-rv32ec.o"
     toolchain.run([
         toolchain.tool,
         "promote",
         guest_obj,
         guest_promoted,
-        "rv32e",
+        "rv32ec",
     ])
 
-    # 2. Promote guest-native.o to rv32e if provided
+    # 2. Promote guest-native.o to rv32ec (or rv32e) if provided
     native_promoted = None
     if config.guest_native_obj:
         native_obj = compile_rv32e_if_source(
@@ -94,13 +97,13 @@ def build_native(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
             config,
             toolchain,
         )
-        native_promoted = out / "guest-native-promoted-rv32e.o"
+        native_promoted = out / f"guest-native-promoted-{native_arch}.o"
         toolchain.run([
             toolchain.tool,
             "promote",
             native_obj,
             native_promoted,
-            "rv32e",
+            native_arch,
         ])
 
     # 3. Create native startup entry
@@ -141,7 +144,7 @@ __sseocb_native_entry:
     toolchain.run([
         toolchain.clang,
         "--target=riscv32",
-        "-march=rv32e",
+        f"-march={native_arch}",
         "-mabi=ilp32e",
         "-mno-relax",
         "-ffreestanding",
@@ -201,7 +204,7 @@ SECTIONS
     link_cmd = [
         toolchain.clang,
         "--target=riscv32",
-        "-march=rv32e",
+        "-march=rv32ec",
         "-mabi=ilp32e",
         "-mno-relax",
         "-nostdlib",

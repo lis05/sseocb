@@ -24,9 +24,23 @@ if [[ -z "$CLANG" ]]; then
     exit 1
 fi
 
-BASE_FLAGS=(
+NO_NATIVE_C=0
+if [[ "${SSEOCB_NATIVE_NO_C:-0}" == "1" ]]; then
+    NO_NATIVE_C=1
+fi
+
+FILTERED_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--no-native-c" ]]; then
+        NO_NATIVE_C=1
+    else
+        FILTERED_ARGS+=("$arg")
+    fi
+done
+set -- "${FILTERED_ARGS[@]}"
+
+COMMON_FLAGS=(
     --target=riscv32
-    -march=rv32e
     -mabi=ilp32e
     -mno-relax
     -ffreestanding
@@ -35,7 +49,9 @@ BASE_FLAGS=(
 
 case "$MODE" in
     guest)
-        BASE_FLAGS+=(
+        BASE_FLAGS=(
+            "${COMMON_FLAGS[@]}"
+            -march=rv32ec
             -fno-optimize-sibling-calls
             -ffunction-sections
             -fno-addrsig
@@ -83,7 +99,14 @@ case "$MODE" in
         ;;
 
     native)
-        BASE_FLAGS+=(
+        NATIVE_ARCH="rv32ec"
+        if [[ $NO_NATIVE_C -eq 1 ]]; then
+            NATIVE_ARCH="rv32e"
+        fi
+
+        BASE_FLAGS=(
+            "${COMMON_FLAGS[@]}"
+            -march="$NATIVE_ARCH"
             -fno-optimize-sibling-calls
             -Oz
         )
@@ -105,8 +128,28 @@ case "$MODE" in
         exec "$CLANG" "${BASE_FLAGS[@]}" "$@"
         ;;
 
-    guest-merge|native-merge)
-        BASE_FLAGS+=(-r -fuse-ld=lld)
+    guest-merge)
+        BASE_FLAGS=(
+            "${COMMON_FLAGS[@]}"
+            -march=rv32ec
+            -r
+            -fuse-ld=lld
+        )
+        exec "$CLANG" "${BASE_FLAGS[@]}" "$@"
+        ;;
+
+    native-merge)
+        NATIVE_ARCH="rv32ec"
+        if [[ $NO_NATIVE_C -eq 1 ]]; then
+            NATIVE_ARCH="rv32e"
+        fi
+
+        BASE_FLAGS=(
+            "${COMMON_FLAGS[@]}"
+            -march="$NATIVE_ARCH"
+            -r
+            -fuse-ld=lld
+        )
         exec "$CLANG" "${BASE_FLAGS[@]}" "$@"
         ;;
 

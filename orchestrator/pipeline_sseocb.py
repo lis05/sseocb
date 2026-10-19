@@ -121,26 +121,27 @@ def build_sseocb(config: Config, toolchain: Toolchain) -> Tuple[Path, str, Path]
         pre_cmd.extend(["--native", str(native_obj)])
     toolchain.run(pre_cmd)
 
-    # 2. Promote guest object to rv32i
+    # 2. Promote guest object to rv32ic
     guest_promoted = out / "guest-promoted.o"
     toolchain.run([
         toolchain.tool,
         "promote",
         guest_obj,
         guest_promoted,
-        "rv32i",
+        "rv32ic",
     ])
 
-    # 3. Promote guest native object to rv32i if present
+    # 3. Promote guest native object to rv32ic (or rv32i) if present
     native_promoted = None
     if native_obj:
         native_promoted = out / "guest-native-promoted.o"
+        native_target = "rv32ic" if config.native_c else "rv32i"
         toolchain.run([
             toolchain.tool,
             "promote",
             native_obj,
             native_promoted,
-            "rv32i",
+            native_target,
         ])
 
     # 4. Generate board linker script
@@ -250,7 +251,7 @@ SECTIONS
     pre_link_cmd = [
         toolchain.clang,
         "--target=riscv32",
-        "-march=rv32i",
+        "-march=rv32ic",
         "-mabi=ilp32",
         "-mno-relax",
         "-nostdlib",
@@ -377,7 +378,7 @@ SECTIONS
     final_link_cmd = [
         toolchain.clang,
         "--target=riscv32",
-        "-march=rv32i",
+        "-march=rv32ic",
         "-mabi=ilp32",
         "-mno-relax",
         "-nostdlib",

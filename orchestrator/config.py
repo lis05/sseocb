@@ -34,3 +34,4 @@ class Config:
     log: bool = False
     size: bool = False
     size_only: bool = False
+    native_c: bool = True

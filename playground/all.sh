@@ -54,6 +54,10 @@ for arg in "$@"; do
             EXTRA_ARGS+=(--log)
             LOG=1
             ;;
+        --no-native-c)
+            export SSEOCB_NATIVE_NO_C=1
+            EXTRA_ARGS+=(--no-native-c)
+            ;;
         -h|--help)
             echo "Usage: ./all.sh [OPTIONS] [-- EXTRA_O_FLAGS...]"
             echo ""

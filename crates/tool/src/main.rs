@@ -263,9 +263,11 @@ fn run_promote(
     let new_flags = match target {
         "rv32i" => orig_flags & !elf::EF_RISCV_RVE.0,
         "rv32e" => orig_flags | elf::EF_RISCV_RVE.0,
+        "rv32ic" => (orig_flags & !elf::EF_RISCV_RVE.0) | elf::EF_RISCV_RVC.0,
+        "rv32ec" => orig_flags | elf::EF_RISCV_RVE.0 | elf::EF_RISCV_RVC.0,
         other => {
             return Err(format!(
-                "Unknown target architecture '{}'. Expected 'rv32i' or 'rv32e'",
+                "Unknown target architecture '{}'. Expected 'rv32i', 'rv32e', 'rv32ic', or 'rv32ec'",
                 other
             )
             .into());
@@ -275,8 +277,8 @@ fn run_promote(
 
     // Also update architecture string in .riscv.attributes if present
     let (from_str, to_str) = match target {
-        "rv32i" => (b"rv32e", b"rv32i"),
-        "rv32e" => (b"rv32i", b"rv32e"),
+        "rv32i" | "rv32ic" => (b"rv32e", b"rv32i"),
+        "rv32e" | "rv32ec" => (b"rv32i", b"rv32e"),
         _ => unreachable!(),
     };
     if let Ok(file) = object::File::parse(&*data)
@@ -740,7 +742,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "  tool pre <input.o> <output_dir> [--native <native.o>] [--vpbase <addr>] [--vpsize <size>] [--entry <symbol>]"
         );
         eprintln!("  tool post <linked_o> <output_dir>");
-        eprintln!("  tool promote <input.o> <output.o> [rv32i|rv32e]");
+        eprintln!("  tool promote <input.o> <output.o> [rv32i|rv32e|rv32ic|rv32ec]");
         eprintln!("  tool remap <input.o> <output.o>");
         eprintln!("  tool compress-blaris <input.bin> <output.bin>");
         eprintln!("  tool compress-graemi <input.bin> <output.bin>");
@@ -771,7 +773,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         "promote" => {
             if args.len() < 4 {
-                eprintln!("Usage: tool promote <input.o> <output.o> [rv32i|rv32e]");
+                eprintln!("Usage: tool promote <input.o> <output.o> [rv32i|rv32e|rv32ic|rv32ec]");
                 std::process::exit(1);
             }
             let target_arch = args.get(4).map(|s| s.as_str());
@@ -1311,5 +1313,41 @@ mod tests {
 
         assert!(symbol_map.contains_key("my_func"));
         assert_eq!(symbol_map.get("my_func"), Some(&0));
+    }
+
+    #[test]
+    fn test_promote_rv32ic_and_rv32ec() {
+        let test_in = std::env::temp_dir().join("test_promote_in.o");
+        let test_out = std::env::temp_dir().join("test_promote_out.o");
+
+        let elf_bytes = build_test_elf(Some(b"test.c"), &[(b"foo", true)], &[]);
+        fs::write(&test_in, elf_bytes).unwrap();
+
+        // Promote to rv32ic
+        run_promote(
+            test_in.to_str().unwrap(),
+            test_out.to_str().unwrap(),
+            Some("rv32ic"),
+        )
+        .unwrap();
+        let out_bytes = fs::read(&test_out).unwrap();
+        let flags = u32::from_le_bytes(out_bytes[36..40].try_into().unwrap());
+        assert_eq!(flags & elf::EF_RISCV_RVE.0, 0);
+        assert_ne!(flags & elf::EF_RISCV_RVC.0, 0);
+
+        // Promote to rv32ec
+        run_promote(
+            test_in.to_str().unwrap(),
+            test_out.to_str().unwrap(),
+            Some("rv32ec"),
+        )
+        .unwrap();
+        let out_bytes = fs::read(&test_out).unwrap();
+        let flags = u32::from_le_bytes(out_bytes[36..40].try_into().unwrap());
+        assert_ne!(flags & elf::EF_RISCV_RVE.0, 0);
+        assert_ne!(flags & elf::EF_RISCV_RVC.0, 0);
+
+        let _ = fs::remove_file(test_in);
+        let _ = fs::remove_file(test_out);
     }
 }

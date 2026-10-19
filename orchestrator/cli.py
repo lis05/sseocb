@@ -1,5 +1,6 @@
 import argparse
 import difflib
+import os
 from pathlib import Path
 import re
 import sys
@@ -139,6 +140,11 @@ def add_common_build_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Run pipeline and print size report without running the simulator",
     )
+    parser.add_argument(
+        "--no-native-c",
+        action="store_true",
+        help="Compile and link native code for rv32e without the C (compressed) extension",
+    )
 
 
 def add_common_run_args(parser: argparse.ArgumentParser) -> None:
@@ -190,6 +196,9 @@ def verify_output(actual: str, expected_path: Optional[Path]) -> None:
 
 
 def build_config(args: argparse.Namespace, subcommand: str, target: str) -> Config:
+    native_c = not getattr(args, "no_native_c", False)
+    if not native_c:
+        os.environ["SSEOCB_NATIVE_NO_C"] = "1"
     return Config(
         subcommand=subcommand,
         target=target,
@@ -214,6 +223,7 @@ def build_config(args: argparse.Namespace, subcommand: str, target: str) -> Conf
         log=getattr(args, "log", False),
         size=getattr(args, "size", False),
         size_only=getattr(args, "size_only", False),
+        native_c=native_c,
     )
 
 
