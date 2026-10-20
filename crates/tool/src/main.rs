@@ -10,10 +10,42 @@ use std::path::Path;
 /// offset (index * 4) in the PLT offset table. A function needs one if either:
 /// - its address is taken inside `guest.o` (absolute / PC-relative address relocations), or
 /// - `native.o` calls it directly (it's undefined in `native.o` but defined in `guest.o`).
+///
+/// Also verifies that no data objects (`STT_OBJECT`) reside in `.text` inside the guest code,
+/// returning an error if any are detected.
 fn get_addressable_symbols(
     guest_file: &object::File,
     native_file: Option<&object::File>,
-) -> HashMap<String, usize> {
+) -> Result<HashMap<String, usize>, Box<dyn Error>> {
+    let mut text_objects = Vec::new();
+    for sym in guest_file.symbols() {
+        if !sym.is_undefined()
+            && sym.kind() == object::SymbolKind::Data
+            && let object::SymbolSection::Section(sec_idx) = sym.section()
+            && let Ok(sec) = guest_file.section_by_index(sec_idx)
+            && sec.kind() == SectionKind::Text
+        {
+            let raw_name = sym.name().unwrap_or("");
+            let name = if raw_name.is_empty() {
+                "<unnamed>"
+            } else {
+                raw_name
+            };
+            let sec_name = sec.name().unwrap_or("<unknown>");
+            text_objects.push(format!("'{name}' in section '{sec_name}'"));
+        }
+    }
+
+    if !text_objects.is_empty() {
+        return Err(format!(
+            "Found data object(s) located in .text section inside guest code: {}. \
+            Data objects cannot reside in vP because they cannot be dereferenced by native code. \
+            Move them to .rodata or data sections.",
+            text_objects.join(", ")
+        )
+        .into());
+    }
+
     let mut res = HashSet::new();
 
     for section in guest_file.sections() {
@@ -64,11 +96,11 @@ fn get_addressable_symbols(
     let mut sorted_symbols: Vec<String> = res.into_iter().collect();
     sorted_symbols.sort();
 
-    sorted_symbols
+    Ok(sorted_symbols
         .into_iter()
         .enumerate()
         .map(|(i, val)| (val, i * 4))
-        .collect()
+        .collect())
 }
 
 fn emit_plt_for_addressable(symbols: &HashMap<String, usize>, dir: &Path) -> std::io::Result<()> {
@@ -204,7 +236,7 @@ fn run_pre(
         println!("  {}", section.name()?);
     }
 
-    let addressable_symbols = get_addressable_symbols(&file, native_file.as_ref());
+    let addressable_symbols = get_addressable_symbols(&file, native_file.as_ref())?;
     println!("Addressable ({} symbols):", addressable_symbols.len());
     let mut sorted_symbols: Vec<(&String, &usize)> = addressable_symbols.iter().collect();
     sorted_symbols.sort_by_key(|(_, num)| *num);
@@ -1292,9 +1324,143 @@ mod tests {
         let parsed_guest = object::File::parse(&*guest_elf).unwrap();
         let parsed_native = object::File::parse(&*native_elf).unwrap();
 
-        let addressable = get_addressable_symbols(&parsed_guest, Some(&parsed_native));
+        let addressable = get_addressable_symbols(&parsed_guest, Some(&parsed_native)).unwrap();
         assert!(addressable.contains_key("guest_func"));
         assert!(!addressable.contains_key("unrelated_func"));
+    }
+
+    #[test]
+    fn test_get_addressable_symbols_rejects_object_in_text() {
+        let mut builder = object::build::elf::Builder::new(object::Endianness::Little, true);
+        let shstrtab = builder.sections.add();
+        shstrtab.name = (&b".shstrtab"[..]).into();
+        shstrtab.sh_type = elf::SHT_STRTAB;
+        shstrtab.data = object::build::elf::SectionData::SectionString;
+
+        let strtab = builder.sections.add();
+        strtab.name = (&b".strtab"[..]).into();
+        strtab.sh_type = elf::SHT_STRTAB;
+        strtab.data = object::build::elf::SectionData::String;
+        let strtab_id = strtab.id();
+
+        let symtab = builder.sections.add();
+        symtab.name = (&b".symtab"[..]).into();
+        symtab.sh_type = elf::SHT_SYMTAB;
+        symtab.sh_link_section = Some(strtab_id);
+        symtab.data = object::build::elf::SectionData::Symbol;
+
+        let text = builder.sections.add();
+        text.name = (&b".text"[..]).into();
+        text.sh_type = elf::SHT_PROGBITS;
+        text.sh_flags = elf::SHF_ALLOC | elf::SHF_EXECINSTR;
+        text.sh_addralign = 4;
+        text.data = object::build::elf::SectionData::Data((&[0x13, 0x00, 0x00, 0x00][..]).into());
+        let text_id = text.id();
+
+        // Add a function in .text
+        let s_func = builder.symbols.add();
+        s_func.name = (&b"my_func"[..]).into();
+        s_func.set_st_info(elf::STB_GLOBAL, elf::STT_FUNC);
+        s_func.section = Some(text_id);
+
+        // Add an object in .text
+        let s_obj = builder.symbols.add();
+        s_obj.name = (&b"bad_array"[..]).into();
+        s_obj.set_st_info(elf::STB_GLOBAL, elf::STT_OBJECT);
+        s_obj.section = Some(text_id);
+
+        let mut buf = Vec::new();
+        builder.write(&mut buf).unwrap();
+
+        let parsed = object::File::parse(&*buf).unwrap();
+        let err = get_addressable_symbols(&parsed, None).unwrap_err();
+        assert!(err.to_string().contains("bad_array"));
+        assert!(err.to_string().contains(".text"));
+    }
+
+    #[test]
+    fn test_get_addressable_symbols_allows_object_in_rodata() {
+        let mut builder = object::build::elf::Builder::new(object::Endianness::Little, true);
+        let shstrtab = builder.sections.add();
+        shstrtab.name = (&b".shstrtab"[..]).into();
+        shstrtab.sh_type = elf::SHT_STRTAB;
+        shstrtab.data = object::build::elf::SectionData::SectionString;
+
+        let strtab = builder.sections.add();
+        strtab.name = (&b".strtab"[..]).into();
+        strtab.sh_type = elf::SHT_STRTAB;
+        strtab.data = object::build::elf::SectionData::String;
+        let strtab_id = strtab.id();
+
+        let symtab = builder.sections.add();
+        symtab.name = (&b".symtab"[..]).into();
+        symtab.sh_type = elf::SHT_SYMTAB;
+        symtab.sh_link_section = Some(strtab_id);
+        symtab.data = object::build::elf::SectionData::Symbol;
+
+        let rodata = builder.sections.add();
+        rodata.name = (&b".rodata"[..]).into();
+        rodata.sh_type = elf::SHT_PROGBITS;
+        rodata.sh_flags = elf::SHF_ALLOC;
+        rodata.sh_addralign = 4;
+        rodata.data = object::build::elf::SectionData::Data((&[0x42, 0x00, 0x00, 0x00][..]).into());
+        let rodata_id = rodata.id();
+
+        // Add an object in .rodata
+        let s_obj = builder.symbols.add();
+        s_obj.name = (&b"good_array"[..]).into();
+        s_obj.set_st_info(elf::STB_GLOBAL, elf::STT_OBJECT);
+        s_obj.section = Some(rodata_id);
+
+        let mut buf = Vec::new();
+        builder.write(&mut buf).unwrap();
+
+        let parsed = object::File::parse(&*buf).unwrap();
+        assert!(get_addressable_symbols(&parsed, None).is_ok());
+    }
+
+    #[test]
+    fn test_get_addressable_symbols_allows_non_executable_section_named_text() {
+        let mut builder = object::build::elf::Builder::new(object::Endianness::Little, true);
+        let shstrtab = builder.sections.add();
+        shstrtab.name = (&b".shstrtab"[..]).into();
+        shstrtab.sh_type = elf::SHT_STRTAB;
+        shstrtab.data = object::build::elf::SectionData::SectionString;
+
+        let strtab = builder.sections.add();
+        strtab.name = (&b".strtab"[..]).into();
+        strtab.sh_type = elf::SHT_STRTAB;
+        strtab.data = object::build::elf::SectionData::String;
+        let strtab_id = strtab.id();
+
+        let symtab = builder.sections.add();
+        symtab.name = (&b".symtab"[..]).into();
+        symtab.sh_type = elf::SHT_SYMTAB;
+        symtab.sh_link_section = Some(strtab_id);
+        symtab.data = object::build::elf::SectionData::Symbol;
+
+        // Section is named .text, but lacks SHF_EXECINSTR (only SHF_ALLOC)
+        let text = builder.sections.add();
+        text.name = (&b".text"[..]).into();
+        text.sh_type = elf::SHT_PROGBITS;
+        text.sh_flags = elf::SHF_ALLOC;
+        text.sh_addralign = 4;
+        text.data = object::build::elf::SectionData::Data((&[0x42, 0x00, 0x00, 0x00][..]).into());
+        let text_id = text.id();
+
+        // Add an object in this non-executable .text section
+        let s_obj = builder.symbols.add();
+        s_obj.name = (&b"data_in_non_exec_text"[..]).into();
+        s_obj.set_st_info(elf::STB_GLOBAL, elf::STT_OBJECT);
+        s_obj.section = Some(text_id);
+
+        let mut buf = Vec::new();
+        builder.write(&mut buf).unwrap();
+
+        let parsed = object::File::parse(&*buf).unwrap();
+        // Since it is not executable (SectionKind is not Text), it will not be collected into vP,
+        // and get_addressable_symbols should succeed without error.
+        assert!(get_addressable_symbols(&parsed, None).is_ok());
     }
 
     #[test]
