@@ -656,15 +656,51 @@ fn fnv1a_hash(parts: &[&[u8]]) -> u64 {
     hash
 }
 
-/// Promotes every static (`STB_LOCAL`) function in an ELF object to a global
-/// symbol named `__sseocb_s_<file>_<hash>_<name>` by parsing the object with
+/// Promotes every static (`STB_LOCAL`) function in an ELF object whose address is taken
+/// to a global symbol named `__sseocb_s_<file>_<hash>_<name>` by parsing the object with
 /// `object::build::elf::Builder` and writing out a fresh object file.
 ///
 /// This lets `ld --wrap` intercept references to static functions (which it
 /// otherwise ignores), while the file-name prefix and deterministic hash prevent
 /// identically named statics from different translation units from colliding.
+/// Static functions that do not have their address taken are kept local.
 fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
     let data = fs::read(file_path)?;
+    let parsed = object::File::parse(&*data)?;
+
+    // Identify symbols targeted by address relocations (i.e. address-taken).
+    let mut address_taken_indices = HashSet::new();
+    let mut address_taken_names = HashSet::new();
+
+    for section in parsed.sections() {
+        for (_offset, reloc) in section.relocations() {
+            let is_address_reloc = match reloc.flags() {
+                object::RelocationFlags::Elf { r_type } => matches!(
+                    r_type,
+                    elf::R_RISCV_32
+                        | elf::R_RISCV_PCREL_HI20
+                        | elf::R_RISCV_HI20
+                        | elf::R_RISCV_32_PCREL
+                        | elf::R_RISCV_PLT32
+                ),
+                _ => false,
+            };
+            if !is_address_reloc {
+                continue;
+            }
+            if let object::RelocationTarget::Symbol(index) = reloc.target() {
+                if index.0 > 0 {
+                    address_taken_indices.insert(index.0 - 1);
+                }
+                if let Ok(sym) = parsed.symbol_by_index(index)
+                    && let Ok(name) = sym.name()
+                {
+                    address_taken_names.insert(name.to_string());
+                }
+            }
+        }
+    }
+
     let mut builder = object::build::elf::Builder::read(&*data)?;
 
     // Determine the source filename from the STT_FILE symbol (e.g. "main.c"),
@@ -687,11 +723,11 @@ fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
 
-    // Promote every named, defined, local function symbol to global.
+    // Promote only named, defined, local function symbols whose address is taken.
     // `Builder::write` automatically reorders STB_LOCAL before STB_GLOBAL,
     // updates `.symtab`'s `sh_info`, rebuilds `.strtab`, and remaps relocations.
     let mut modified = false;
-    for sym in builder.symbols.iter_mut() {
+    for (sym_idx, sym) in builder.symbols.iter_mut().enumerate() {
         let Ok(name) = std::str::from_utf8(&sym.name) else {
             continue;
         };
@@ -700,6 +736,8 @@ fn run_globalize(file_path: &str) -> Result<(), Box<dyn Error>> {
             && sym.section.is_some()
             && !name.is_empty()
             && !name.starts_with("__sseocb_s_")
+            && address_taken_indices.contains(&sym_idx)
+            && address_taken_names.contains(name)
         {
             let content: &[u8] = if let Some(sec_id) = sym.section {
                 let sec = builder.sections.get(sec_id);
@@ -1152,6 +1190,7 @@ mod tests {
         file_name: Option<&[u8]>,
         defined_funcs: &[(&[u8], bool)],
         undefined_syms: &[&[u8]],
+        address_taken_syms: &[&[u8]],
     ) -> Vec<u8> {
         use object::build::elf::SectionData;
 
@@ -1175,6 +1214,7 @@ mod tests {
         symtab.sh_type = elf::SHT_SYMTAB;
         symtab.sh_link_section = Some(strtab_id);
         symtab.data = SectionData::Symbol;
+        let symtab_id = symtab.id();
 
         let text = builder.sections.add();
         text.name = (&b".text"[..]).into();
@@ -1192,6 +1232,7 @@ mod tests {
             s.st_shndx = elf::SHN_ABS;
         }
 
+        let mut relocs = Vec::new();
         for &(name, is_global) in defined_funcs {
             let s = builder.symbols.add();
             s.name = name.into();
@@ -1202,6 +1243,25 @@ mod tests {
             };
             s.set_st_info(bind, elf::STT_FUNC);
             s.section = Some(text_id);
+            if address_taken_syms.contains(&name) {
+                relocs.push(object::build::elf::Relocation {
+                    r_offset: 0,
+                    symbol: Some(s.id()),
+                    r_type: elf::R_RISCV_PCREL_HI20,
+                    r_addend: 0,
+                });
+            }
+        }
+
+        if !relocs.is_empty() {
+            let rel_sec = builder.sections.add();
+            rel_sec.name = (&b".rela.text"[..]).into();
+            rel_sec.sh_type = elf::SHT_RELA;
+            rel_sec.sh_flags = elf::SectionFlags(0);
+            rel_sec.sh_info_section = Some(text_id);
+            rel_sec.sh_link_section = Some(symtab_id);
+            rel_sec.sh_addralign = 4;
+            rel_sec.data = SectionData::Relocation(relocs);
         }
 
         for &name in undefined_syms {
@@ -1218,7 +1278,12 @@ mod tests {
     #[test]
     fn test_globalize_elf() {
         let test_o = std::env::temp_dir().join("test_globalize_unit.o");
-        let elf_bytes = build_test_elf(Some(b"test.c"), &[(b"foo", false), (b"bar", true)], &[]);
+        let elf_bytes = build_test_elf(
+            Some(b"test.c"),
+            &[(b"foo", false), (b"bar", true)],
+            &[],
+            &[b"foo"],
+        );
 
         fs::write(&test_o, elf_bytes).unwrap();
         run_globalize(test_o.to_str().unwrap()).unwrap();
@@ -1261,6 +1326,7 @@ mod tests {
         symtab.sh_type = elf::SHT_SYMTAB;
         symtab.sh_link_section = Some(strtab_id);
         symtab.data = object::build::elf::SectionData::Symbol;
+        let symtab_id = symtab.id();
 
         let text = builder.sections.add();
         text.name = (&b".text"[..]).into();
@@ -1288,6 +1354,7 @@ mod tests {
         s1.section = Some(text_id);
         s1.st_value = 0;
         s1.st_size = 8;
+        let s1_id = s1.id();
 
         let s2 = builder.symbols.add();
         s2.name = (&b"helper"[..]).into();
@@ -1295,6 +1362,29 @@ mod tests {
         s2.section = Some(text_id);
         s2.st_value = 8;
         s2.st_size = 8;
+        let s2_id = s2.id();
+
+        let rel_sec = builder.sections.add();
+        rel_sec.name = (&b".rela.text"[..]).into();
+        rel_sec.sh_type = elf::SHT_RELA;
+        rel_sec.sh_flags = elf::SectionFlags(0);
+        rel_sec.sh_info_section = Some(text_id);
+        rel_sec.sh_link_section = Some(symtab_id);
+        rel_sec.sh_addralign = 4;
+        rel_sec.data = object::build::elf::SectionData::Relocation(vec![
+            object::build::elf::Relocation {
+                r_offset: 0,
+                symbol: Some(s1_id),
+                r_type: elf::R_RISCV_PCREL_HI20,
+                r_addend: 0,
+            },
+            object::build::elf::Relocation {
+                r_offset: 4,
+                symbol: Some(s2_id),
+                r_type: elf::R_RISCV_PCREL_HI20,
+                r_addend: 0,
+            },
+        ]);
 
         let mut buf = Vec::new();
         builder.write(&mut buf).unwrap();
@@ -1317,9 +1407,80 @@ mod tests {
     }
 
     #[test]
+    fn test_globalize_ignores_non_address_taken_static() {
+        let test_o = std::env::temp_dir().join("test_globalize_non_addr_taken.o");
+        let mut builder = object::build::elf::Builder::new(object::Endianness::Little, true);
+        builder.header.e_machine = elf::EM_RISCV;
+
+        let shstrtab = builder.sections.add();
+        shstrtab.name = (&b".shstrtab"[..]).into();
+        shstrtab.sh_type = elf::SHT_STRTAB;
+        shstrtab.data = object::build::elf::SectionData::SectionString;
+
+        let strtab = builder.sections.add();
+        strtab.name = (&b".strtab"[..]).into();
+        strtab.sh_type = elf::SHT_STRTAB;
+        strtab.data = object::build::elf::SectionData::String;
+        let strtab_id = strtab.id();
+
+        let symtab = builder.sections.add();
+        symtab.name = (&b".symtab"[..]).into();
+        symtab.sh_type = elf::SHT_SYMTAB;
+        symtab.sh_link_section = Some(strtab_id);
+        symtab.data = object::build::elf::SectionData::Symbol;
+        let symtab_id = symtab.id();
+
+        let text = builder.sections.add();
+        text.name = (&b".text"[..]).into();
+        text.sh_type = elf::SHT_PROGBITS;
+        text.sh_flags = elf::SHF_ALLOC | elf::SHF_EXECINSTR;
+        text.sh_addralign = 4;
+        text.data = object::build::elf::SectionData::Data((&[0x13, 0x00, 0x00, 0x00][..]).into());
+        let text_id = text.id();
+
+        let s = builder.symbols.add();
+        s.name = (&b"internal_helper"[..]).into();
+        s.set_st_info(elf::STB_LOCAL, elf::STT_FUNC);
+        s.section = Some(text_id);
+        let s_id = s.id();
+
+        // Direct call relocation (R_RISCV_CALL_PLT) - NOT address taken!
+        let rel_sec = builder.sections.add();
+        rel_sec.name = (&b".rela.text"[..]).into();
+        rel_sec.sh_type = elf::SHT_RELA;
+        rel_sec.sh_flags = elf::SectionFlags(0);
+        rel_sec.sh_info_section = Some(text_id);
+        rel_sec.sh_link_section = Some(symtab_id);
+        rel_sec.sh_addralign = 4;
+        rel_sec.data =
+            object::build::elf::SectionData::Relocation(vec![object::build::elf::Relocation {
+                r_offset: 0,
+                symbol: Some(s_id),
+                r_type: elf::R_RISCV_CALL_PLT,
+                r_addend: 0,
+            }]);
+
+        let mut buf = Vec::new();
+        builder.write(&mut buf).unwrap();
+        fs::write(&test_o, buf).unwrap();
+
+        run_globalize(test_o.to_str().unwrap()).unwrap();
+
+        let updated = fs::read(&test_o).unwrap();
+        let parsed = object::File::parse(&*updated).unwrap();
+        let sym = parsed
+            .symbols()
+            .find(|s| s.name() == Ok("internal_helper"))
+            .expect("Symbol should retain original name");
+        assert_eq!(sym.scope(), object::SymbolScope::Compilation); // Still local!
+
+        let _ = fs::remove_file(test_o);
+    }
+
+    #[test]
     fn test_get_addressable_symbols_with_native() {
-        let guest_elf = build_test_elf(None, &[(b"guest_func", true)], &[]);
-        let native_elf = build_test_elf(None, &[], &[b"guest_func", b"unrelated_func"]);
+        let guest_elf = build_test_elf(None, &[(b"guest_func", true)], &[], &[]);
+        let native_elf = build_test_elf(None, &[], &[b"guest_func", b"unrelated_func"], &[]);
 
         let parsed_guest = object::File::parse(&*guest_elf).unwrap();
         let parsed_native = object::File::parse(&*native_elf).unwrap();
@@ -1348,6 +1509,7 @@ mod tests {
         symtab.sh_type = elf::SHT_SYMTAB;
         symtab.sh_link_section = Some(strtab_id);
         symtab.data = object::build::elf::SectionData::Symbol;
+        let _symtab_id = symtab.id();
 
         let text = builder.sections.add();
         text.name = (&b".text"[..]).into();
@@ -1397,6 +1559,7 @@ mod tests {
         symtab.sh_type = elf::SHT_SYMTAB;
         symtab.sh_link_section = Some(strtab_id);
         symtab.data = object::build::elf::SectionData::Symbol;
+        let _symtab_id = symtab.id();
 
         let rodata = builder.sections.add();
         rodata.name = (&b".rodata"[..]).into();
@@ -1438,6 +1601,7 @@ mod tests {
         symtab.sh_type = elf::SHT_SYMTAB;
         symtab.sh_link_section = Some(strtab_id);
         symtab.data = object::build::elf::SectionData::Symbol;
+        let _symtab_id = symtab.id();
 
         // Section is named .text, but lacks SHF_EXECINSTR (only SHF_ALLOC)
         let text = builder.sections.add();
@@ -1465,7 +1629,7 @@ mod tests {
 
     #[test]
     fn test_post_ignores_undefined_symbols() {
-        let elf_bytes = build_test_elf(None, &[(b"my_func", true)], &[b"my_func"]);
+        let elf_bytes = build_test_elf(None, &[(b"my_func", true)], &[b"my_func"], &[]);
         let parsed = object::File::parse(&*elf_bytes).unwrap();
 
         let mut symbol_map = HashMap::new();
@@ -1486,7 +1650,7 @@ mod tests {
         let test_in = std::env::temp_dir().join("test_promote_in.o");
         let test_out = std::env::temp_dir().join("test_promote_out.o");
 
-        let elf_bytes = build_test_elf(Some(b"test.c"), &[(b"foo", true)], &[]);
+        let elf_bytes = build_test_elf(Some(b"test.c"), &[(b"foo", true)], &[], &[]);
         fs::write(&test_in, elf_bytes).unwrap();
 
         // Promote to rv32ic
