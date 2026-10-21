@@ -1,12 +1,8 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23527945.svg)](https://doi.org/10.5281/zenodo.23527945)
+
 # SSEOCB
 Software Side Executor Of Compressed Binaries is a project with a purpose to allow
 execution of programs which are larger than the target device's Flash memory size.
-
-## Demo
-In this demo, uLisp Zero interpreter is run natively and by using SSEOCB. Native
-(uncompressed) program fails to link as it is too large (~23 KiB). With SSEOCB, it
-just barely fits in the 16 KiB Flash, outputting a star (see [`e2e/tests/ulisp`](e2e/tests/ulisp)).
-![uLisp interpreter running via SSEOCB](demos-ulisp.png)
 
 ## Background
 Small microcontrollers have just a few kilobytes of memory, which limits how large the
@@ -72,15 +68,15 @@ In the root:
 - `orchestrator/` contains a python tool for building and running programs with
   SSEOCB.
 - `e2e/` contains SSEOCB tests which include some simple programs and more complex
-  ones (such as Lisp/Basic interpreters)
+  ones.
 
 ## Milestones
 Completed:
 - The system is implemented and can correctly execute compressed binaries using
   `sim/`
-- An example guest program is provided such that `C + I < O` where `C` is the size of the compressed program, `I` is the size of the interpreter, and `O` is the size of the original, uncompressed guest program. (e2e/tests/ulisp).
 
 In progress:
+- An example guest program is provided such that `C + I < O` where `C` is the size of the compressed program, `I` is the size of the interpreter, and `O` is the size of the original, uncompressed guest program.
 - Testing and validating the system on real hardware.
 
 Other milestones are not published for the purpose of research.
@@ -89,4 +85,5 @@ Other milestones are not published for the purpose of research.
 TODO, on real hardware with concrete examples.
 
 ## Known limitations
-Static symbols cannot be used as handlers. TBD.
+1. Guest code must be compiled without tail jumps.
+2. Only clang is supported.
